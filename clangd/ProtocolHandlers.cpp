@@ -68,4 +68,6 @@ void clangd::registerCallbackHandlers(JSONRPCDispatcher &Dispatcher,
   Register("textDocument/switchSourceHeader",
            &ProtocolCallbacks::onSwitchSourceHeader);
   Register("workspace/didChangeWatchedFiles", &ProtocolCallbacks::onFileEvent);
+  Register("workspace/executeCommand", &ProtocolCallbacks::onCommand);
+  Register("textDocument/references", &ProtocolCallbacks::onReferences);
 }

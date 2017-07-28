@@ -40,6 +40,7 @@ export function activate(context: vscode.ExtensionContext) {
     };
 
     const clangdClient = new vscodelc.LanguageClient('Clang Language Server', serverOptions, clientOptions);
+    clangdClient.trace = vscodejsonrpc.Trace.Verbose;
 
     function applyTextEdits(uri: string, edits: vscodelc.TextEdit[]) {
         let textEditor = vscode.window.activeTextEditor;

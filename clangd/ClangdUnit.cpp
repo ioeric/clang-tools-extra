@@ -14,8 +14,10 @@
 #include "clang/Frontend/CompilerInvocation.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Frontend/Utils.h"
-#include "clang/Index/IndexDataConsumer.h"
 #include "clang/Index/IndexingAction.h"
+#include "clang/Index/IndexDataConsumer.h"
+#include <clang/Index/USRGeneration.h>
+#include <index/ClangdIndex.h>
 #include "clang/Lex/Lexer.h"
 #include "clang/Lex/MacroInfo.h"
 #include "clang/Lex/Preprocessor.h"
@@ -27,6 +29,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/Path.h"
 
 #include <algorithm>
 #include <chrono>
@@ -883,7 +886,21 @@ ParsedAST::Build(std::unique_ptr<clang::CompilerInvocation> CI,
 
   std::vector<const Decl *> ParsedDecls = Action->takeTopLevelDecls();
   std::vector<serialization::DeclID> PendingDecls;
-  if (Preamble) {
+
+  //FIXME: I don't know why, this doesn't work properly with header files
+  // Rebuild the preamble if it is missing or can not be reused.
+  const char* const DEFAULT_SOURCE_EXTENSIONS [] = { ".cpp", ".c", ".cc", ".cxx",
+      ".c++", ".C", ".m", ".mm" };
+  bool IsSource = false;
+  llvm::StringRef FileExtension = llvm::sys::path::extension(MainInput.getFile());
+  for (const char* Extension : DEFAULT_SOURCE_EXTENSIONS) {
+    if (FileExtension == Extension)
+      IsSource = true;
+  }
+  //FIXME: End hack
+
+
+  if (Preamble && IsSource) {
     PendingDecls.reserve(PreambleDeclIDs.size());
     PendingDecls.insert(PendingDecls.begin(), PreambleDeclIDs.begin(),
                         PreambleDeclIDs.end());
@@ -913,14 +930,21 @@ SourceLocation getMacroArgExpandedLocation(const SourceManager &Mgr,
 class DeclarationLocationsFinder : public index::IndexDataConsumer {
   std::vector<Location> DeclarationLocations;
   const SourceLocation &SearchedLocation;
-  const ASTContext &AST;
+  ASTContext &AST;
   Preprocessor &PP;
-
+  ClangdIndex& Index;
+  FileManager FM;
+  IntrusiveRefCntPtr<DiagnosticsEngine> DE;
+  // We create our own SourceManager here because the AST's SM might have
+  // outdated file buffers as it is not necessarily reparsed.
+  SourceManager TempSM;
 public:
   DeclarationLocationsFinder(raw_ostream &OS,
-                             const SourceLocation &SearchedLocation,
-                             ASTContext &AST, Preprocessor &PP)
-      : SearchedLocation(SearchedLocation), AST(AST), PP(PP) {}
+      const SourceLocation &SearchedLocation, ASTContext &AST, Preprocessor &PP,
+      ClangdIndex &Index) :
+      SearchedLocation(SearchedLocation), AST(AST), PP(PP), Index(Index), FM(
+          AST.getSourceManager().getFileManager().getFileSystemOpts()), DE(CompilerInstance::createDiagnostics(new DiagnosticOptions)), TempSM(*DE, FM) {
+  }
 
   std::vector<Location> takeLocations() {
     // Don't keep the same location multiple times.
@@ -938,6 +962,22 @@ public:
                       unsigned Offset,
                       index::IndexDataConsumer::ASTNodeInfo ASTNode) override {
     if (isSearchedLocation(FID, Offset)) {
+      if (auto FuncDecl = dyn_cast<FunctionDecl>(D)) {
+        if (FuncDecl->isThisDeclarationADefinition()) {
+          addDeclarationLocation(D->getSourceRange());
+          return true;
+        }
+      }
+
+      SmallString<256> USRBuf;
+      if (!index::generateUSRForDecl(D, USRBuf)) {
+        auto definitions = Index.getDefinitions(USRBuf);
+        if (!definitions.empty()) {
+          addDeclarationLocation(definitions[0]->getPath(), definitions[0]->getLocStart(), definitions[0]->getLocEnd());
+          return true;
+        }
+      }
+
       addDeclarationLocation(D->getSourceRange());
     }
     return true;
@@ -968,12 +1008,39 @@ private:
         SourceMgr.getFileID(LocStart))) {
       StringRef FilePath = F->tryGetRealPathName();
       if (FilePath.empty()) {
+        //FIXME: Does tryGetRealPathName return empty if and only if the path to
+        //the include doesn't exist? If that's the case we should skip this
+        //include.
         FilePath = F->getName();
       }
       L.uri = URI::fromFile(FilePath);
       L.range = R;
       DeclarationLocations.push_back(L);
     }
+  }
+
+  void addDeclarationLocation(const std::string & File, IndexSourceLocation LocStart,
+      IndexSourceLocation LocEnd) {
+    SourceManager& SourceMgr = TempSM;
+
+    const FileEntry *FE = SourceMgr.getFileManager().getFile(File);
+    if (!FE) {
+      return;
+    }
+    FileID FID = SourceMgr.getOrCreateFileID(FE, SrcMgr::C_User);
+
+    Position Begin;
+    bool Invalid;
+    Begin.line = SourceMgr.getLineNumber(FID, LocStart, &Invalid) - 1;
+    Begin.character = SourceMgr.getColumnNumber(FID, LocStart, &Invalid) - 1;
+    Position End;
+    End.line = SourceMgr.getLineNumber(FID, LocEnd, &Invalid) - 1;
+    End.character = SourceMgr.getColumnNumber(FID, LocEnd, &Invalid) - 1;
+    Range R = { Begin, End };
+    Location L;
+    L.uri = URI::fromFile(File);
+    L.range = R;
+    DeclarationLocations.push_back(L);
   }
 
   void finish() override {
@@ -999,6 +1066,150 @@ private:
         MacroInfo *MacroInf = MacroDef.getMacroInfo();
         if (MacroInf) {
           addDeclarationLocation(SourceRange(MacroInf->getDefinitionLoc(),
+                                             MacroInf->getDefinitionEndLoc()));
+        }
+      }
+    }
+  }
+};
+
+/// Finds declarations locations that a given source location refers to.
+/// FIXME: This needs to be refactored to contain less overlapping with
+/// DeclarationLocationsFinder
+class ReferenceLocationsFinder : public index::IndexDataConsumer {
+  std::vector<Location> DeclarationLocations;
+  const SourceLocation &SearchedLocation;
+  ASTContext &AST;
+  Preprocessor &PP;
+  ClangdIndex& Index;
+  FileManager FM;
+  IntrusiveRefCntPtr<DiagnosticsEngine> DE;
+  // We create our own SourceManager here because the AST's SM might have
+  // outdated file buffers as it is not necessarily reparsed.
+  SourceManager TempSM;
+public:
+  ReferenceLocationsFinder(raw_ostream &OS,
+      const SourceLocation &SearchedLocation, ASTContext &AST, Preprocessor &PP,
+      ClangdIndex &Index) :
+      SearchedLocation(SearchedLocation), AST(AST), PP(PP), Index(Index), FM(
+          AST.getSourceManager().getFileManager().getFileSystemOpts()), DE(CompilerInstance::createDiagnostics(new DiagnosticOptions)), TempSM(*DE, FM) {
+  }
+
+  std::vector<Location> takeLocations() {
+    // Don't keep the same location multiple times.
+    // This can happen when nodes in the AST are visited twice.
+    std::sort(DeclarationLocations.begin(), DeclarationLocations.end());
+    auto last =
+        std::unique(DeclarationLocations.begin(), DeclarationLocations.end());
+    DeclarationLocations.erase(last, DeclarationLocations.end());
+    return std::move(DeclarationLocations);
+  }
+
+  bool
+  handleDeclOccurence(const Decl *D, index::SymbolRoleSet Roles,
+                      ArrayRef<index::SymbolRelation> Relations, FileID FID,
+                      unsigned Offset,
+                      index::IndexDataConsumer::ASTNodeInfo ASTNode) override {
+    if (isSearchedLocation(FID, Offset)) {
+      SmallString<256> USRBuf;
+      if (!index::generateUSRForDecl(D, USRBuf)) {
+        auto definitions = Index.getReferences(USRBuf);
+        for (auto &A : definitions) {
+          addLocation(A->getPath(), A->getLocStart(), A->getLocEnd());
+        }
+        return true;
+      }
+
+      // FIXME: This doesn't look right. Not needed?
+      addLocation(D->getSourceRange());
+    }
+    return true;
+  }
+
+private:
+  bool isSearchedLocation(FileID FID, unsigned Offset) const {
+    const SourceManager &SourceMgr = AST.getSourceManager();
+    return SourceMgr.getFileOffset(SearchedLocation) == Offset &&
+           SourceMgr.getFileID(SearchedLocation) == FID;
+  }
+
+  void addLocation(const SourceRange &ValSourceRange) {
+    const SourceManager &SourceMgr = AST.getSourceManager();
+    const LangOptions &LangOpts = AST.getLangOpts();
+    SourceLocation LocStart = ValSourceRange.getBegin();
+    SourceLocation LocEnd = Lexer::getLocForEndOfToken(ValSourceRange.getEnd(),
+                                                       0, SourceMgr, LangOpts);
+    Position Begin;
+    Begin.line = SourceMgr.getSpellingLineNumber(LocStart) - 1;
+    Begin.character = SourceMgr.getSpellingColumnNumber(LocStart) - 1;
+    Position End;
+    End.line = SourceMgr.getSpellingLineNumber(LocEnd) - 1;
+    End.character = SourceMgr.getSpellingColumnNumber(LocEnd) - 1;
+    Range R = {Begin, End};
+    Location L;
+    if (const FileEntry *F = SourceMgr.getFileEntryForID(
+        SourceMgr.getFileID(LocStart))) {
+      StringRef FilePath = F->tryGetRealPathName();
+      if (FilePath.empty()) {
+        //FIXME: Does tryGetRealPathName return empty if and only if the path to
+        //the include doesn't exist? If that's the case we should skip this
+        //include.
+        FilePath = F->getName();
+      }
+      L.uri = URI::fromFile(FilePath);
+      L.range = R;
+      DeclarationLocations.push_back(L);
+    }
+  }
+
+  void addLocation(const std::string & File, IndexSourceLocation LocStart,
+      IndexSourceLocation LocEnd) {
+    SourceManager& SourceMgr = TempSM;
+
+    const FileEntry *FE = SourceMgr.getFileManager().getFile(File);
+    if (!FE) {
+      return;
+    }
+    FileID FID = SourceMgr.getOrCreateFileID(FE, SrcMgr::C_User);
+
+    Position Begin;
+    bool Invalid;
+    Begin.line = SourceMgr.getLineNumber(FID, LocStart, &Invalid) - 1;
+    Begin.character = SourceMgr.getColumnNumber(FID, LocStart, &Invalid) - 1;
+    Position End;
+    End.line = SourceMgr.getLineNumber(FID, LocEnd, &Invalid) - 1;
+    End.character = SourceMgr.getColumnNumber(FID, LocEnd, &Invalid) - 1;
+    Range R = { Begin, End };
+    Location L;
+    L.uri = URI::fromFile(File);
+    L.range = R;
+    DeclarationLocations.push_back(L);
+  }
+
+  // FIXME: I think this is just a copy paste and needs to be revisited.
+  void finish() override {
+    // Also handle possible macro at the searched location.
+    Token Result;
+    if (!Lexer::getRawToken(SearchedLocation, Result, AST.getSourceManager(),
+                            AST.getLangOpts(), false)) {
+      if (Result.is(tok::raw_identifier)) {
+        PP.LookUpIdentifierInfo(Result);
+      }
+      IdentifierInfo *IdentifierInfo = Result.getIdentifierInfo();
+      if (IdentifierInfo && IdentifierInfo->hadMacroDefinition()) {
+        std::pair<FileID, unsigned int> DecLoc =
+            AST.getSourceManager().getDecomposedExpansionLoc(SearchedLocation);
+        // Get the definition just before the searched location so that a macro
+        // referenced in a '#undef MACRO' can still be found.
+        SourceLocation BeforeSearchedLocation = getMacroArgExpandedLocation(
+            AST.getSourceManager(),
+            AST.getSourceManager().getFileEntryForID(DecLoc.first),
+            DecLoc.second - 1);
+        MacroDefinition MacroDef =
+            PP.getMacroDefinitionAtLoc(IdentifierInfo, BeforeSearchedLocation);
+        MacroInfo *MacroInf = MacroDef.getMacroInfo();
+        if (MacroInf) {
+          addLocation(SourceRange(MacroInf->getDefinitionLoc(),
                                              MacroInf->getDefinitionEndLoc()));
         }
       }
@@ -1046,7 +1257,7 @@ SourceLocation getBeginningOfIdentifier(ParsedAST &Unit, const Position &Pos,
 }
 } // namespace
 
-std::vector<Location> clangd::findDefinitions(ParsedAST &AST, Position Pos,
+std::vector<Location> clangd::findDefinitions(ParsedAST &AST, Position Pos, ClangdIndex &CurrentIndex,
                                               clangd::Logger &Logger) {
   const SourceManager &SourceMgr = AST.getASTContext().getSourceManager();
   const FileEntry *FE = SourceMgr.getFileEntryForID(SourceMgr.getMainFileID());
@@ -1057,7 +1268,30 @@ std::vector<Location> clangd::findDefinitions(ParsedAST &AST, Position Pos,
 
   auto DeclLocationsFinder = std::make_shared<DeclarationLocationsFinder>(
       llvm::errs(), SourceLocationBeg, AST.getASTContext(),
-      AST.getPreprocessor());
+      AST.getPreprocessor(), CurrentIndex);
+  index::IndexingOptions IndexOpts;
+  IndexOpts.SystemSymbolFilter =
+      index::IndexingOptions::SystemSymbolFilterKind::All;
+  IndexOpts.IndexFunctionLocals = true;
+
+  indexTopLevelDecls(AST.getASTContext(), AST.getTopLevelDecls(),
+                     DeclLocationsFinder, IndexOpts);
+
+  return DeclLocationsFinder->takeLocations();
+}
+
+std::vector<Location> clangd::findReferences(ParsedAST &AST, Position Pos, ClangdIndex &CurrentIndex,
+                                              clangd::Logger &Logger) {
+  const SourceManager &SourceMgr = AST.getASTContext().getSourceManager();
+  const FileEntry *FE = SourceMgr.getFileEntryForID(SourceMgr.getMainFileID());
+  if (!FE)
+    return {};
+
+  SourceLocation SourceLocationBeg = getBeginningOfIdentifier(AST, Pos, FE);
+
+  auto DeclLocationsFinder = std::make_shared<ReferenceLocationsFinder>(
+      llvm::errs(), SourceLocationBeg, AST.getASTContext(),
+      AST.getPreprocessor(), CurrentIndex);
   index::IndexingOptions IndexOpts;
   IndexOpts.SystemSymbolFilter =
       index::IndexingOptions::SystemSymbolFilterKind::All;

@@ -225,6 +225,14 @@ struct DidCloseTextDocumentParams {
   parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
 };
 
+struct DidSaveTextDocumentParams {
+  /// The document that was closed.
+  TextDocumentIdentifier textDocument;
+
+  static llvm::Optional<DidSaveTextDocumentParams>
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
+};
+
 struct TextDocumentContentChangeEvent {
   /// The new text of the document.
   std::string text;
@@ -382,6 +390,16 @@ struct CodeActionParams {
                                                 clangd::Logger &Logger);
 };
 
+struct ExecuteCommandParams {
+  /// The identifier of the actual command handler.
+  std::string command;
+
+  std::vector<std::string> arguments;
+
+  static llvm::Optional<ExecuteCommandParams>
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
+};
+
 struct TextDocumentPositionParams {
   /// The text document.
   TextDocumentIdentifier textDocument;
@@ -390,6 +408,21 @@ struct TextDocumentPositionParams {
   Position position;
 
   static llvm::Optional<TextDocumentPositionParams>
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
+};
+
+struct ReferenceContext {
+  /// Include the declaration of the current symbol.
+  bool includeDeclaration;
+
+  static llvm::Optional<ReferenceContext>
+  parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
+};
+
+struct ReferenceParams : public TextDocumentPositionParams {
+  ReferenceContext context;
+
+  static llvm::Optional<ReferenceParams>
   parse(llvm::yaml::MappingNode *Params, clangd::Logger &Logger);
 };
 

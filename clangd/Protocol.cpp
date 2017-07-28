@@ -411,6 +411,32 @@ DidCloseTextDocumentParams::parse(llvm::yaml::MappingNode *Params,
   return Result;
 }
 
+llvm::Optional<DidSaveTextDocumentParams>
+DidSaveTextDocumentParams::parse(
+    llvm::yaml::MappingNode *Params, clangd::Logger &Logger) {
+  DidSaveTextDocumentParams Result;
+  for (auto &NextKeyValue : *Params) {
+    auto *KeyString = dyn_cast<llvm::yaml::ScalarNode>(NextKeyValue.getKey());
+    if (!KeyString)
+      return llvm::None;
+
+    llvm::SmallString<10> KeyStorage;
+    StringRef KeyValue = KeyString->getValue(KeyStorage);
+    auto *Value = NextKeyValue.getValue();
+
+    if (KeyValue == "textDocument") {
+      auto *Map = dyn_cast<llvm::yaml::MappingNode>(Value);
+      if (!Map)
+        return llvm::None;
+      auto Parsed = TextDocumentIdentifier::parse(Map, Logger);
+      if (!Parsed)
+        return llvm::None;
+      Result.textDocument = std::move(*Parsed);
+    }
+  }
+  return Result;
+}
+
 llvm::Optional<DidChangeTextDocumentParams>
 DidChangeTextDocumentParams::parse(llvm::yaml::MappingNode *Params,
                                    clangd::Logger &Logger) {
@@ -846,6 +872,47 @@ CodeActionParams::parse(llvm::yaml::MappingNode *Params,
   return Result;
 }
 
+llvm::Optional<ExecuteCommandParams>
+ExecuteCommandParams::parse(
+    llvm::yaml::MappingNode *Params, clangd::Logger &Logger) {
+  ExecuteCommandParams Result;
+  for (auto &NextKeyValue : *Params) {
+    auto *KeyString = dyn_cast<llvm::yaml::ScalarNode>(NextKeyValue.getKey());
+    if (!KeyString)
+      return llvm::None;
+
+    llvm::SmallString<10> KeyStorage;
+    StringRef KeyValue = KeyString->getValue(KeyStorage);
+
+    if (KeyValue == "command") {
+      auto *ScalarValue =
+          dyn_cast_or_null<llvm::yaml::ScalarNode>(NextKeyValue.getValue());
+      if (!ScalarValue)
+        return llvm::None;
+      llvm::SmallString<10> Storage;
+      Result.command  = ScalarValue->getValue(Storage);
+      continue;
+    } else if (KeyValue == "arguments") {
+      auto *Value = NextKeyValue.getValue();
+      auto *Seq = dyn_cast<llvm::yaml::SequenceNode>(Value);
+      if (!Seq)
+        break;
+      for (auto &Item : *Seq) {
+        auto *Value =
+            dyn_cast_or_null<llvm::yaml::ScalarNode>(&Item);
+        if (!Value)
+          continue;
+        llvm::SmallString<10> Storage;
+        auto Val = Value->getValue(Storage);
+        if (!Val.empty()) {
+          Result.arguments.push_back(Val);
+        }
+      }
+    }
+  }
+  return Result;
+}
+
 llvm::Optional<TextDocumentPositionParams>
 TextDocumentPositionParams::parse(llvm::yaml::MappingNode *Params,
                                   clangd::Logger &Logger) {
@@ -864,6 +931,77 @@ TextDocumentPositionParams::parse(llvm::yaml::MappingNode *Params,
 
     llvm::SmallString<10> Storage;
     if (KeyValue == "textDocument") {
+      auto Parsed = TextDocumentIdentifier::parse(Value, Logger);
+      if (!Parsed)
+        return llvm::None;
+      Result.textDocument = std::move(*Parsed);
+    } else if (KeyValue == "position") {
+      auto Parsed = Position::parse(Value, Logger);
+      if (!Parsed)
+        return llvm::None;
+      Result.position = std::move(*Parsed);
+    } else {
+      logIgnoredField(KeyValue, Logger);
+    }
+  }
+  return Result;
+}
+
+llvm::Optional<ReferenceContext> ReferenceContext::parse(
+    llvm::yaml::MappingNode *Params, clangd::Logger &Logger) {
+  ReferenceContext Result;
+  for (auto &NextKeyValue : *Params) {
+    auto *KeyString = dyn_cast<llvm::yaml::ScalarNode>(NextKeyValue.getKey());
+    if (!KeyString)
+      return llvm::None;
+
+    llvm::SmallString<10> KeyStorage;
+    StringRef KeyValue = KeyString->getValue(KeyStorage);
+    auto *Value = dyn_cast_or_null<llvm::yaml::ScalarNode>(
+        NextKeyValue.getValue());
+    if (!Value)
+      return llvm::None;
+
+    llvm::SmallString<10> Storage;
+    if (KeyValue == "includeDeclaration") {
+      long long Val;
+      StringRef Str = Value->getValue(Storage);
+      if (llvm::getAsSignedInteger(Str, 0, Val))
+        Result.includeDeclaration = Val;
+      else
+        return llvm::None;
+    } else {
+      logIgnoredField(KeyValue, Logger);
+    }
+  }
+  return Result;
+}
+
+llvm::Optional<ReferenceParams>
+ReferenceParams::parse(
+    llvm::yaml::MappingNode *Params, clangd::Logger &Logger) {
+  ReferenceParams Result;
+
+  for (auto &NextKeyValue : *Params) {
+    auto *KeyString = dyn_cast<llvm::yaml::ScalarNode>(NextKeyValue.getKey());
+    if (!KeyString)
+      return llvm::None;
+
+    llvm::SmallString<10> KeyStorage;
+    StringRef KeyValue = KeyString->getValue(KeyStorage);
+    auto *Value =
+        dyn_cast_or_null<llvm::yaml::MappingNode>(NextKeyValue.getValue());
+    if (!Value)
+      continue;
+
+    //FIXME: put code in common with TextDocumentIdentifier
+    llvm::SmallString<10> Storage;
+    if (KeyValue == "context") {
+      auto Parsed = ReferenceContext::parse(Value, Logger);
+      if (!Parsed)
+        return llvm::None;
+      Result.context = std::move(*Parsed);
+    } else if (KeyValue == "textDocument") {
       auto Parsed = TextDocumentIdentifier::parse(Value, Logger);
       if (!Parsed)
         return llvm::None;

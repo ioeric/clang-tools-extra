@@ -13,6 +13,11 @@ add_clang_library(clangDaemon
   Logger.cpp
   Protocol.cpp
   ProtocolHandlers.cpp
+  index/BTree.cpp
+  index/ClangdIndex.cpp
+  index/ClangdIndexDataPiece.cpp
+  index/ClangdIndexDataStorage.cpp
+  index/ClangdIndexString.cpp
 
   LINK_LIBS
   clangAST

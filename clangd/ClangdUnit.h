@@ -41,6 +41,7 @@ struct CompileCommand;
 namespace clangd {
 
 class Logger;
+class ClangdIndex;
 
 /// A diagnostic with its FixIts.
 struct DiagWithFixIts {
@@ -306,7 +307,9 @@ SignatureHelp signatureHelp(PathRef FileName,
 
 /// Get definition of symbol at a specified \p Pos.
 std::vector<Location> findDefinitions(ParsedAST &AST, Position Pos,
-                                      clangd::Logger &Logger);
+    ClangdIndex &CurrentIndex, clangd::Logger &Logger);
+std::vector<Location> findReferences(ParsedAST &AST, Position Pos,
+    ClangdIndex &CurrentIndex, clangd::Logger &Logger);
 
 /// For testing/debugging purposes. Note that this method deserializes all
 /// unserialized Decls, so use with care.

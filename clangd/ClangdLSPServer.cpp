@@ -47,7 +47,8 @@ void ClangdLSPServer::onInitialize(Ctx C, InitializeParams &Params) {
           "codeActionProvider": true,
           "completionProvider": {"resolveProvider": false, "triggerCharacters": [".",">",":"]},
           "signatureHelpProvider": {"triggerCharacters": ["(",","]},
-          "definitionProvider": true
+          "definitionProvider": true,
+          "referencesProvider": true
         }})");
   if (Params.rootUri && !Params.rootUri->file.empty())
     Server.setRootPath(Params.rootUri->file);
@@ -78,6 +79,23 @@ void ClangdLSPServer::onDocumentDidChange(Ctx C,
   // We only support full syncing right now.
   Server.addDocument(Params.textDocument.uri.file,
                      Params.contentChanges[0].text);
+}
+
+void ClangdLSPServer::onDocumentDidSave(
+    Ctx C, DidSaveTextDocumentParams Params) {
+  Server.fileChanged(Params.textDocument.uri);
+}
+
+void ClangdLSPServer::onReindex() {
+  Server.reindex();
+}
+
+void ClangdLSPServer::onDumpIncludedBy(URI File) {
+  Server.dumpIncludedBy(File);
+}
+
+void ClangdLSPServer::onDumpInclusions(URI File) {
+  Server.dumpInclusions(File);
 }
 
 void ClangdLSPServer::onFileEvent(Ctx C, DidChangeWatchedFilesParams &Params) {
@@ -191,6 +209,40 @@ void ClangdLSPServer::onSwitchSourceHeader(Ctx C,
   llvm::Optional<Path> Result = Server.switchSourceHeader(Params.uri.file);
   std::string ResultUri;
   C.reply(Result ? URI::unparse(URI::fromFile(*Result)) : R"("")");
+}
+
+void ClangdLSPServer::onCommand(Ctx C, ExecuteCommandParams &Params) {
+
+  if (Params.command == "reindex") {
+    Server.reindex();
+  } else if(Params.command == "dumpincludedby") {
+	if (!Params.arguments.empty()) {
+	  Server.dumpIncludedBy(URI::fromFile(Params.arguments[0]));
+	}
+  } else if(Params.command == "dumpinclusions") {
+	if (!Params.arguments.empty()) {
+	  Server.dumpInclusions(URI::fromFile(Params.arguments[0]));
+	}
+  }
+
+  C.reply(R"("")");
+}
+
+void ClangdLSPServer::onReferences(Ctx C, ReferenceParams &Params) {
+  auto Items = Server.findReferences(
+      Params.textDocument.uri.file,
+      Position{Params.position.line, Params.position.character});
+  if (!Items)
+    return C.replyError(-32602, llvm::toString(Items.takeError()));
+
+  std::string Locations;
+  for (const auto &Item : Items->Value) {
+    Locations += Location::unparse(Item);
+    Locations += ",";
+  }
+  if (!Locations.empty())
+    Locations.pop_back();
+  C.reply("[" + Locations + "]");
 }
 
 ClangdLSPServer::ClangdLSPServer(JSONOutput &Out, unsigned AsyncThreadsCount,

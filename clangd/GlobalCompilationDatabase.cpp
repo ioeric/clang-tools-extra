@@ -9,6 +9,8 @@
 
 #include "GlobalCompilationDatabase.h"
 #include "Logger.h"
+#include "index/ClangdIndex.h"
+
 #include "clang/Tooling/CompilationDatabase.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
@@ -42,13 +44,55 @@ DirectoryBasedGlobalCompilationDatabase::
         clangd::Logger &Logger, llvm::Optional<Path> CompileCommandsDir)
     : Logger(Logger), CompileCommandsDir(std::move(CompileCommandsDir)) {}
 
+std::vector<tooling::CompileCommand> DirectoryBasedGlobalCompilationDatabase::getCompileCommandsUsingIndex(std::unique_ptr<ClangdIndexFile> IndexFile) {
+
+  std::vector<tooling::CompileCommand> Commands;
+  clang::tooling::CompilationDatabase * CDB = nullptr;
+  IndexFile->visitDependentFiles([this, &CDB, &Commands](ClangdIndexFile &IndexFile) {
+    auto IncludedBy = IndexFile.getFirstIncludedBy();
+    if (!IncludedBy) {
+      CDB = getCompilationDatabase(IndexFile.getPath());
+      if (CDB) {
+        Commands = CDB->getCompileCommands(IndexFile.getPath());
+        return false;
+      }
+    }
+    return true;
+  });
+  return Commands;
+}
+
 std::vector<tooling::CompileCommand>
 DirectoryBasedGlobalCompilationDatabase::getCompileCommands(PathRef File) {
   std::vector<tooling::CompileCommand> Commands;
 
   auto CDB = getCompilationDatabase(File);
-  if (CDB)
+  if (CDB) {
     Commands = CDB->getCompileCommands(File);
+  }
+  if (Commands.empty()) {
+    //TODO: index mutex needs to be locked!
+    if (auto LockedIndex = Index.lock()) {
+      auto IndexFile = LockedIndex->getFile(File.str());
+      if (IndexFile) {
+        Commands = getCompileCommandsUsingIndex(std::move(IndexFile));
+        for (auto &Command : Commands) {
+          Command.Filename = File.str();
+          bool NextIsSourceFileName = false;
+          for (auto &CommandLineArg : Command.CommandLine) {
+            if (CommandLineArg == "-c") {
+              NextIsSourceFileName = true;
+            } else if (NextIsSourceFileName) {
+              if (!CommandLineArg.empty()) {
+                CommandLineArg = File.str();
+              }
+              NextIsSourceFileName = false;
+            }
+          }
+        }
+      }
+    }
+  }
   if (Commands.empty())
     Commands.push_back(getDefaultCompileCommand(File));
 

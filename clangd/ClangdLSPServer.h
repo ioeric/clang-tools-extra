@@ -54,6 +54,7 @@ private:
   void onShutdown(Ctx C, ShutdownParams &Params) override;
   void onExit(Ctx C, ExitParams &Params) override;
   void onDocumentDidOpen(Ctx C, DidOpenTextDocumentParams &Params) override;
+  void onDocumentDidSave(Ctx C, DidSaveTextDocumentParams Params) override;
   void onDocumentDidChange(Ctx C, DidChangeTextDocumentParams &Params) override;
   void onDocumentDidClose(Ctx C, DidCloseTextDocumentParams &Params) override;
   void
@@ -69,6 +70,11 @@ private:
   void onGoToDefinition(Ctx C, TextDocumentPositionParams &Params) override;
   void onSwitchSourceHeader(Ctx C, TextDocumentIdentifier &Params) override;
   void onFileEvent(Ctx C, DidChangeWatchedFilesParams &Params) override;
+  void onCommand(Ctx C, ExecuteCommandParams &Params) override;
+  void onReindex() override;
+  void onDumpIncludedBy(URI File) override;
+  void onDumpInclusions(URI File) override;
+  void onReferences(Ctx C, ReferenceParams &Params) override;
 
   std::vector<clang::tooling::Replacement>
   getFixIts(StringRef File, const clangd::Diagnostic &D);

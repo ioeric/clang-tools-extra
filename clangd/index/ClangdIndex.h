@@ -3,9 +3,9 @@
 
 #include "BTree.h"
 
+#include "clang/Index/IndexSymbol.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/Chrono.h"
-#include "clang/Index/IndexSymbol.h"
 
 #include <set>
 
@@ -15,10 +15,6 @@ namespace clangd {
 using USR = llvm::SmallString<256>;
 
 using IndexSourceLocation = uint32_t;
-
-// Chances are that we will never have fields at an offset more than a uint8 so
-// use we can save a little space.
-using OffsetInRecord = uint8_t;
 
 class ClangdIndexFile;
 class ClangdIndex;
@@ -34,8 +30,8 @@ class ClangdIndexSymbol {
   ClangdIndex &Index;
   ClangdIndexDataStorage &Storage;
 public:
-  ClangdIndexSymbol(ClangdIndex& Index, USR Usr);
-  ClangdIndexSymbol(ClangdIndex &Index, RecordPointer Record);
+  ClangdIndexSymbol(ClangdIndexDataStorage &Storage, USR Usr, ClangdIndex& Index);
+  ClangdIndexSymbol(ClangdIndexDataStorage &Storage, RecordPointer Record, ClangdIndex &Index);
   std::string getUsr();
 
   RecordPointer getRecord() const {
@@ -75,9 +71,9 @@ class ClangdIndexOccurrence {
   ClangdIndex &Index;
   ClangdIndexDataStorage &Storage;
 public:
-  ClangdIndexOccurrence(ClangdIndex& Index, const ClangdIndexFile& File, ClangdIndexSymbol &Symbol,
+  ClangdIndexOccurrence(ClangdIndexDataStorage &Storage, ClangdIndex& Index, const ClangdIndexFile& File, ClangdIndexSymbol &Symbol,
       IndexSourceLocation LocStart, IndexSourceLocation LocEnd, index::SymbolRoleSet Roles);
-  ClangdIndexOccurrence(ClangdIndex &Index, RecordPointer Record);
+  ClangdIndexOccurrence(ClangdIndexDataStorage &Storage, RecordPointer Record, ClangdIndex &Index);
 
   std::unique_ptr<ClangdIndexSymbol> getSymbol();
   std::string getPath();
@@ -124,11 +120,12 @@ class ClangdIndexHeaderInclusion {
   ClangdIndexDataStorage &Storage;
 
 public:
-  ClangdIndexHeaderInclusion(ClangdIndex &Index,
+  ClangdIndexHeaderInclusion(ClangdIndexDataStorage &Storage,
       const ClangdIndexFile& IncludedByFile,
-      const ClangdIndexFile& IncludedFile);
-  ClangdIndexHeaderInclusion(ClangdIndex &Index,
-      RecordPointer Record);
+      const ClangdIndexFile& IncludedFile,
+      ClangdIndex &Index);
+  ClangdIndexHeaderInclusion(ClangdIndexDataStorage &Storage,
+      RecordPointer Record, ClangdIndex &Index);
 
   void setPrevIncludedBy(RecordPointer Rec) {
     Storage.putRecPtr(Record + PREV_INCLUDED_BY, Rec);
@@ -176,8 +173,8 @@ class ClangdIndexFile {
   ClangdIndex &Index;
   ClangdIndexDataStorage &Storage;
 public:
-  ClangdIndexFile(ClangdIndex &Index, std::string Path);
-  ClangdIndexFile(ClangdIndex &Index, RecordPointer Record);
+  ClangdIndexFile(ClangdIndexDataStorage &Storage, std::string Path, ClangdIndex &Index);
+  ClangdIndexFile(ClangdIndexDataStorage &Storage, RecordPointer Record, ClangdIndex &Index);
 
   const std::string& getPath();
 
@@ -238,8 +235,8 @@ class ClangdIndex {
     }
 
     int compare(RecordPointer Record1, RecordPointer Record2) override {
-      ClangdIndexFile File1(Index, Record1);
-      ClangdIndexFile File2(Index, Record2);
+      ClangdIndexFile File1(Index.getStorage(), Record1, Index);
+      ClangdIndexFile File2(Index.getStorage(), Record2, Index);
       return File1.getPath().compare(File2.getPath());
     }
   };
@@ -253,8 +250,8 @@ class ClangdIndex {
     }
 
     int compare(RecordPointer Record1, RecordPointer Record2) override {
-      ClangdIndexSymbol Symbol1(Index, Record1);
-      ClangdIndexSymbol Symbol2(Index, Record2);
+      ClangdIndexSymbol Symbol1(Index.getStorage(), Record1, Index);
+      ClangdIndexSymbol Symbol2(Index.getStorage(), Record2, Index);
       return Symbol1.getUsr().compare(Symbol2.getUsr());
     }
   };
@@ -286,11 +283,11 @@ public:
 
   llvm::SmallVector<std::unique_ptr<ClangdIndexSymbol>, 1> getSymbols(
       const USR& Buf);
-
   llvm::SmallVector<std::unique_ptr<ClangdIndexOccurrence>, 1> getDefinitions(
       const USR& Buf);
   llvm::SmallVector<std::unique_ptr<ClangdIndexOccurrence>, 1> getReferences(
       const USR& Buf);
+  llvm::SmallVector<std::unique_ptr<ClangdIndexOccurrence>, 1> getOccurrences(const USR& Buf, index::SymbolRoleSet Roles);
 
   std::unique_ptr<ClangdIndexFile> getFile(const std::string& FilePath);
 
@@ -313,9 +310,6 @@ public:
   // For troubleshooting
   void dumpSymbolsTree();
   void dumpFilesTree();
-
-private:
-  llvm::SmallVector<std::unique_ptr<ClangdIndexOccurrence>, 1> getOccurrences(const USR& Buf, index::SymbolRoleSet Roles);
 };
 
 } // namespace clangd

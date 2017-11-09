@@ -16,8 +16,7 @@
 #include "clang/Frontend/Utils.h"
 #include "clang/Index/IndexingAction.h"
 #include "clang/Index/IndexDataConsumer.h"
-#include <clang/Index/USRGeneration.h>
-#include <index/ClangdIndex.h>
+#include "clang/Index/USRGeneration.h"
 #include "clang/Lex/Lexer.h"
 #include "clang/Lex/MacroInfo.h"
 #include "clang/Lex/Preprocessor.h"
@@ -30,6 +29,8 @@
 #include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/Path.h"
+#include "index/ClangdIndexDataProvider.h"
+#include "indexstore/IndexStoreCXX.h"
 
 #include <algorithm>
 #include <chrono>
@@ -932,7 +933,7 @@ class DeclarationLocationsFinder : public index::IndexDataConsumer {
   const SourceLocation &SearchedLocation;
   ASTContext &AST;
   Preprocessor &PP;
-  ClangdIndex& Index;
+  ClangdIndexDataProvider &IndexProvider;
   FileManager FM;
   IntrusiveRefCntPtr<DiagnosticsEngine> DE;
   // We create our own SourceManager here because the AST's SM might have
@@ -941,8 +942,8 @@ class DeclarationLocationsFinder : public index::IndexDataConsumer {
 public:
   DeclarationLocationsFinder(raw_ostream &OS,
       const SourceLocation &SearchedLocation, ASTContext &AST, Preprocessor &PP,
-      ClangdIndex &Index) :
-      SearchedLocation(SearchedLocation), AST(AST), PP(PP), Index(Index), FM(
+      ClangdIndexDataProvider &IndexProvider) :
+      SearchedLocation(SearchedLocation), AST(AST), PP(PP), IndexProvider(IndexProvider), FM(
           AST.getSourceManager().getFileManager().getFileSystemOpts()), DE(CompilerInstance::createDiagnostics(new DiagnosticOptions)), TempSM(*DE, FM) {
   }
 
@@ -971,14 +972,11 @@ public:
 
       SmallString<256> USRBuf;
       if (!index::generateUSRForDecl(D, USRBuf)) {
-        auto definitions = Index.getDefinitions(USRBuf);
-        if (!definitions.empty()) {
-          addDeclarationLocation(definitions[0]->getPath(), definitions[0]->getLocStart(), definitions[0]->getLocEnd());
+        IndexProvider.foreachOccurrence(USRBuf, static_cast<index::SymbolRoleSet>(index::SymbolRole::Definition), [this](ClangdIndexDataOccurrence &Occurrence) {
+          addDeclarationLocation(Occurrence.getPath(), Occurrence.getStartOffset(TempSM), Occurrence.getEndOffset(TempSM));
           return true;
-        }
+        });
       }
-
-      addDeclarationLocation(D->getSourceRange());
     }
     return true;
   }
@@ -1019,8 +1017,8 @@ private:
     }
   }
 
-  void addDeclarationLocation(const std::string & File, IndexSourceLocation LocStart,
-      IndexSourceLocation LocEnd) {
+  void addDeclarationLocation(const std::string & File, uint32_t LocStart,
+      uint32_t LocEnd) {
     SourceManager& SourceMgr = TempSM;
 
     const FileEntry *FE = SourceMgr.getFileManager().getFile(File);
@@ -1081,7 +1079,7 @@ class ReferenceLocationsFinder : public index::IndexDataConsumer {
   const SourceLocation &SearchedLocation;
   ASTContext &AST;
   Preprocessor &PP;
-  ClangdIndex& Index;
+  ClangdIndexDataProvider &IndexDataProvider;
   FileManager FM;
   IntrusiveRefCntPtr<DiagnosticsEngine> DE;
   // We create our own SourceManager here because the AST's SM might have
@@ -1090,8 +1088,8 @@ class ReferenceLocationsFinder : public index::IndexDataConsumer {
 public:
   ReferenceLocationsFinder(raw_ostream &OS,
       const SourceLocation &SearchedLocation, ASTContext &AST, Preprocessor &PP,
-      ClangdIndex &Index) :
-      SearchedLocation(SearchedLocation), AST(AST), PP(PP), Index(Index), FM(
+      ClangdIndexDataProvider &IndexDataProvider) :
+      SearchedLocation(SearchedLocation), AST(AST), PP(PP), IndexDataProvider(IndexDataProvider), FM(
           AST.getSourceManager().getFileManager().getFileSystemOpts()), DE(CompilerInstance::createDiagnostics(new DiagnosticOptions)), TempSM(*DE, FM) {
   }
 
@@ -1109,19 +1107,21 @@ public:
   handleDeclOccurence(const Decl *D, index::SymbolRoleSet Roles,
                       ArrayRef<index::SymbolRelation> Relations, FileID FID,
                       unsigned Offset,
-                      index::IndexDataConsumer::ASTNodeInfo ASTNode) override {
+                      index::IndexDataConsumer::ASTNodeInfo ASTNode) override {	
     if (isSearchedLocation(FID, Offset)) {
       SmallString<256> USRBuf;
       if (!index::generateUSRForDecl(D, USRBuf)) {
-        auto definitions = Index.getReferences(USRBuf);
-        for (auto &A : definitions) {
-          addLocation(A->getPath(), A->getLocStart(), A->getLocEnd());
+        SmallString<256> USRBuf;
+        if (!index::generateUSRForDecl(D, USRBuf)) {
+          index::SymbolRoleSet InterestingSet = static_cast<index::SymbolRoleSet>(index::SymbolRole::Reference)
+                    | static_cast<index::SymbolRoleSet>(index::SymbolRole::Declaration)
+                    | static_cast<index::SymbolRoleSet>(index::SymbolRole::Definition);
+          IndexDataProvider.foreachOccurrence(USRBuf, InterestingSet, [this](ClangdIndexDataOccurrence &Occurrence) {
+            addLocation(Occurrence.getPath(), Occurrence.getStartOffset(TempSM), Occurrence.getEndOffset(TempSM));
+            return true;
+          });
         }
-        return true;
       }
-
-      // FIXME: This doesn't look right. Not needed?
-      addLocation(D->getSourceRange());
     }
     return true;
   }
@@ -1162,8 +1162,8 @@ private:
     }
   }
 
-  void addLocation(const std::string & File, IndexSourceLocation LocStart,
-      IndexSourceLocation LocEnd) {
+  void addLocation(const std::string & File, uint32_t LocStart,
+      uint32_t LocEnd) {
     SourceManager& SourceMgr = TempSM;
 
     const FileEntry *FE = SourceMgr.getFileManager().getFile(File);
@@ -1257,7 +1257,7 @@ SourceLocation getBeginningOfIdentifier(ParsedAST &Unit, const Position &Pos,
 }
 } // namespace
 
-std::vector<Location> clangd::findDefinitions(ParsedAST &AST, Position Pos, ClangdIndex &CurrentIndex,
+std::vector<Location> clangd::findDefinitions(ParsedAST &AST, Position Pos, ClangdIndexDataProvider &IndexDataProvider,
                                               clangd::Logger &Logger) {
   const SourceManager &SourceMgr = AST.getASTContext().getSourceManager();
   const FileEntry *FE = SourceMgr.getFileEntryForID(SourceMgr.getMainFileID());
@@ -1268,7 +1268,7 @@ std::vector<Location> clangd::findDefinitions(ParsedAST &AST, Position Pos, Clan
 
   auto DeclLocationsFinder = std::make_shared<DeclarationLocationsFinder>(
       llvm::errs(), SourceLocationBeg, AST.getASTContext(),
-      AST.getPreprocessor(), CurrentIndex);
+      AST.getPreprocessor(), IndexDataProvider);
   index::IndexingOptions IndexOpts;
   IndexOpts.SystemSymbolFilter =
       index::IndexingOptions::SystemSymbolFilterKind::All;
@@ -1280,7 +1280,7 @@ std::vector<Location> clangd::findDefinitions(ParsedAST &AST, Position Pos, Clan
   return DeclLocationsFinder->takeLocations();
 }
 
-std::vector<Location> clangd::findReferences(ParsedAST &AST, Position Pos, ClangdIndex &CurrentIndex,
+std::vector<Location> clangd::findReferences(ParsedAST &AST, Position Pos, ClangdIndexDataProvider &IndexDataProvider,
                                               clangd::Logger &Logger) {
   const SourceManager &SourceMgr = AST.getASTContext().getSourceManager();
   const FileEntry *FE = SourceMgr.getFileEntryForID(SourceMgr.getMainFileID());
@@ -1291,7 +1291,7 @@ std::vector<Location> clangd::findReferences(ParsedAST &AST, Position Pos, Clang
 
   auto DeclLocationsFinder = std::make_shared<ReferenceLocationsFinder>(
       llvm::errs(), SourceLocationBeg, AST.getASTContext(),
-      AST.getPreprocessor(), CurrentIndex);
+      AST.getPreprocessor(), IndexDataProvider);
   index::IndexingOptions IndexOpts;
   IndexOpts.SystemSymbolFilter =
       index::IndexingOptions::SystemSymbolFilterKind::All;
@@ -1530,7 +1530,7 @@ CppFile::deferRebuild(StringRef NewContents,
       IntrusiveRefCntPtr<DiagnosticsEngine> PreambleDiagsEngine =
           CompilerInstance::createDiagnostics(
               &CI->getDiagnosticOpts(), &PreambleDiagnosticsConsumer, false);
-      CppFilePreambleCallbacks SerializedDeclsCollector;
+      CppFilePreambleCallbacks SerializedDeclsCollector, Foo;
       auto BuiltPreamble = PrecompiledPreamble::Build(
           *CI, ContentsBuffer.get(), Bounds, *PreambleDiagsEngine, VFS, PCHs,
           SerializedDeclsCollector);

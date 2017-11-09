@@ -13,6 +13,8 @@
 
 #include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "clang/AST/ASTContext.h"
+#include "clang/Basic/SourceManager.h"
 #include "clang/Index/CodegenNameGenerator.h"
 #include "clang/Index/IndexDataConsumer.h"
 #include "clang/Index/USRGeneration.h"
@@ -63,12 +65,12 @@ class ClangdIndexDataConsumer : public index::IndexDataConsumer {
 
     auto FileCacheIt = IndexFileCache.find(FilePath);
     if (FileCacheIt != IndexFileCache.end()) {
-      return llvm::make_unique<ClangdIndexFile>(Index, FileCacheIt->second);
+      return llvm::make_unique<ClangdIndexFile>(Index.getStorage(), FileCacheIt->second, Index);
     }
 
     auto File = Index.getFile(FilePath);
     if (!File) {
-      File = llvm::make_unique<ClangdIndexFile>(Index, FilePath);
+      File = llvm::make_unique<ClangdIndexFile>(Index.getStorage(), FilePath, Index);
       Index.addFile(*File);
     }
     IndexFileCache.insert( { FilePath, File->getRecord() });
@@ -80,13 +82,13 @@ class ClangdIndexDataConsumer : public index::IndexDataConsumer {
     std::string USRStr = Buf.str();
     auto SymbolCacheIt = IndexSymbolCache.find(USRStr);
     if (SymbolCacheIt != IndexSymbolCache.end()) {
-      Result.push_back(llvm::make_unique<ClangdIndexSymbol>(Index, SymbolCacheIt->second));
+      Result.push_back(llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), SymbolCacheIt->second, Index));
       return Result;
     }
 
     Result = Index.getSymbols(Buf);
     if (Result.empty()) {
-      Result.push_back(llvm::make_unique<ClangdIndexSymbol>(Index, Buf));
+      Result.push_back(llvm::make_unique<ClangdIndexSymbol>(Index.getStorage(), Buf, Index));
       Index.addSymbol(*Result.front());
     }
     IndexSymbolCache.insert( { USRStr, Result.front()->getRecord() });
@@ -175,7 +177,8 @@ public:
         IndexSourceLocation LocEnd = createIndexSourceLocation(Range.getEnd(), *SM, Ctx.getLangOpts());
 
         auto Occurrence =
-            llvm::make_unique<ClangdIndexOccurrence>(Index, *OccurrenceFile,
+            llvm::make_unique<ClangdIndexOccurrence>(Index.getStorage(), Index,
+                *OccurrenceFile,
                 *Symbol, LocStart, LocEnd,
                 static_cast<index::SymbolRoleSet>(Roles));
 

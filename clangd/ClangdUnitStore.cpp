@@ -75,3 +75,4 @@ bool CppFileCollection::compileCommandsAreEqual(
          std::equal(LHS.CommandLine.begin(), LHS.CommandLine.end(),
                     RHS.CommandLine.begin());
 }
+

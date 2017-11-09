@@ -18,4 +18,5 @@ target_link_libraries(clangd
   clangSema
   clangTooling
   clangToolingCore
+  IndexStore
   )

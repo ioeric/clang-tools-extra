@@ -12,6 +12,8 @@
 
 #include "ClangdIndexDataPiece.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <deque>
 #include <fstream>
 #include <memory>
@@ -215,6 +217,20 @@ public:
   }
   void endWrite();
 };
+
+template <class T, class... Args>
+static std::unique_ptr<T> getPtrOrNull(ClangdIndexDataStorage &Storage, RecordPointer Offset,
+    Args &&... args) {
+  RecordPointer Rec = Storage.getRecPtr(Offset);
+  if (Rec == 0) {
+    return {};
+  }
+  return llvm::make_unique<T>(Storage, Rec, std::forward<Args>(args)...);
+}
+
+// Chances are that we will never have fields at an offset more than a uint8 so
+// use we can save a little space.
+using OffsetInRecord = uint8_t;
 
 } // namespace clangd
 } // namespace clang

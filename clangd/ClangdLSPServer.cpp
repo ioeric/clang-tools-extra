@@ -83,7 +83,10 @@ void ClangdLSPServer::onDocumentDidChange(Ctx C,
 
 void ClangdLSPServer::onDocumentDidSave(
     Ctx C, DidSaveTextDocumentParams Params) {
-  Server.fileChanged(Params.textDocument.uri);
+  FileEvent FE = { Params.textDocument.uri, FileChangeType::Changed };
+  DidChangeWatchedFilesParams P;
+  P.changes = {FE};
+  Server.onFileEvent(P);
 }
 
 void ClangdLSPServer::onReindex() {

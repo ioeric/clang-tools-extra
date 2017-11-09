@@ -30,7 +30,6 @@
 #include <thread>
 #include <type_traits>
 #include <utility>
-#include "index/ClangdIndex.h"
 
 namespace clang {
 class PCHContainerOperations;
@@ -38,6 +37,8 @@ class PCHContainerOperations;
 namespace clangd {
 
 class Logger;
+class ClangdIndexer;
+class ClangdIndexDataProvider;
 
 /// Turn a [line, column] pair into an offset in Code.
 size_t positionToOffset(StringRef Code, Position P);
@@ -309,10 +310,6 @@ public:
   /// Called when an event occurs for a watched file in the workspace.
   void onFileEvent(const DidChangeWatchedFilesParams &Params);
 
-  void indexRoot(bool CheckModified);
-  void fileChanged (URI RootUri);
-  void fileCreated (URI RootUri);
-  void fileDeleted (URI RootUri);
   void reindex();
   void dumpIncludedBy (URI File);
   void dumpInclusions (URI File);
@@ -347,9 +344,8 @@ private:
   // ClangdServer
   ClangdScheduler WorkScheduler;
 
-  void indexFolder(StringRef Folder);
-  void indexFile(StringRef File);
-  std::shared_ptr<ClangdIndex> Index;
+  std::shared_ptr<ClangdIndexer> Indexer;
+  std::shared_ptr<ClangdIndexDataProvider> IndexDataProvider;
   std::recursive_mutex IndexMutex;
 };
 

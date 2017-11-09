@@ -6,19 +6,7 @@
 namespace clang {
 namespace clangd {
 
-namespace {
-template <class T, class... Args>
-std::unique_ptr<T> getPtrOrNull(ClangdIndex &Index, RecordPointer Offset,
-    Args &&... args) {
-  RecordPointer Rec = Index.getStorage().getRecPtr(Offset);
-  if (Rec == 0) {
-    return {};
-  }
-  return llvm::make_unique<T>(Index, Rec, std::forward<Args>(args)...);
-}
-}
-
-ClangdIndexSymbol::ClangdIndexSymbol(ClangdIndex &Index, USR Usr) :
+ClangdIndexSymbol::ClangdIndexSymbol(ClangdIndexDataStorage &Storage, USR Usr, ClangdIndex& Index) :
     Index(Index), Storage(Index.getStorage()) {
   Record = Storage.mallocRecord(RECORD_SIZE);
   ClangdIndexString Str(Storage, Usr.c_str());
@@ -26,7 +14,7 @@ ClangdIndexSymbol::ClangdIndexSymbol(ClangdIndex &Index, USR Usr) :
   assert(!getFirstOccurrence());
 }
 
-ClangdIndexSymbol::ClangdIndexSymbol(ClangdIndex &Index, RecordPointer Record) :
+ClangdIndexSymbol::ClangdIndexSymbol(ClangdIndexDataStorage &Storage, RecordPointer Record, ClangdIndex &Index) :
     Record(Record), Index(Index), Storage(Index.getStorage()) {
   assert (Record >= ClangdIndexDataStorage::DATA_AREA);
 }
@@ -36,7 +24,7 @@ std::string ClangdIndexSymbol::getUsr() {
 }
 
 std::unique_ptr<ClangdIndexOccurrence> ClangdIndexSymbol::getFirstOccurrence() {
-  return getPtrOrNull<ClangdIndexOccurrence>(Index, Record + FIRST_OCCURRENCE);
+  return getPtrOrNull<ClangdIndexOccurrence>(Index.getStorage(), Record + FIRST_OCCURRENCE, Index);
 }
 
 void ClangdIndexSymbol::setFirstOccurrence(ClangdIndexOccurrence &Occurrence) {
@@ -102,7 +90,7 @@ void ClangdIndexSymbol::free() {
   Storage.freeRecord(Record);
 }
 
-ClangdIndexOccurrence::ClangdIndexOccurrence(ClangdIndex& Index, const ClangdIndexFile& File, ClangdIndexSymbol &Symbol,
+ClangdIndexOccurrence::ClangdIndexOccurrence(ClangdIndexDataStorage &Storage, ClangdIndex& Index, const ClangdIndexFile& File, ClangdIndexSymbol &Symbol,
     IndexSourceLocation LocStart, IndexSourceLocation LocEnd, index::SymbolRoleSet Roles) : Index(Index), Storage(Index.getStorage()) {
   Record = Storage.mallocRecord(RECORD_SIZE);
   Storage.putRecPtr(Record + SYMBOL_OFFSET, Symbol.getRecord());
@@ -113,13 +101,13 @@ ClangdIndexOccurrence::ClangdIndexOccurrence(ClangdIndex& Index, const ClangdInd
   Storage.putInt32(Record + ROLES_OFFSET, static_cast<uint32_t>(Roles));
 }
 
-ClangdIndexOccurrence::ClangdIndexOccurrence(ClangdIndex &Index, RecordPointer Record) :
+ClangdIndexOccurrence::ClangdIndexOccurrence(ClangdIndexDataStorage &Storage, RecordPointer Record, ClangdIndex &Index) :
     Record(Record), Index(Index), Storage(Index.getStorage()) {
   assert (Record >= ClangdIndexDataStorage::DATA_AREA);
 }
 
 std::unique_ptr<ClangdIndexSymbol> ClangdIndexOccurrence::getSymbol() {
-  return getPtrOrNull<ClangdIndexSymbol>(Index, Record + SYMBOL_OFFSET);
+  return getPtrOrNull<ClangdIndexSymbol>(Storage, Record + SYMBOL_OFFSET, Index);
 }
 
 std::string ClangdIndexOccurrence::getPath() {
@@ -127,11 +115,11 @@ std::string ClangdIndexOccurrence::getPath() {
   if (Rec == 0) {
     return {};
   }
-  return ClangdIndexFile(Index, Rec).getPath();
+  return ClangdIndexFile(Storage, Rec, Index).getPath();
 }
 
 std::unique_ptr<ClangdIndexOccurrence> ClangdIndexOccurrence::getNextInFile() {
-  return getPtrOrNull<ClangdIndexOccurrence>(Index, Record + FILE_NEXT_OFFSET);
+  return getPtrOrNull<ClangdIndexOccurrence>(Storage, Record + FILE_NEXT_OFFSET, Index);
 }
 
 void ClangdIndexOccurrence::setNextInFile (ClangdIndexOccurrence &Occurrence) {
@@ -139,7 +127,7 @@ void ClangdIndexOccurrence::setNextInFile (ClangdIndexOccurrence &Occurrence) {
 }
 
 std::unique_ptr<ClangdIndexOccurrence> ClangdIndexOccurrence::getNextOccurrence() {
-  return getPtrOrNull<ClangdIndexOccurrence>(Index, Record + SYMBOL_NEXT_OCCURENCE);
+  return getPtrOrNull<ClangdIndexOccurrence>(Storage, Record + SYMBOL_NEXT_OCCURENCE, Index);
 }
 
 void ClangdIndexOccurrence::setNextOccurrence(ClangdIndexOccurrence &Occurrence) {
@@ -154,52 +142,53 @@ void ClangdIndexOccurrence::free() {
   Storage.freeRecord(Record);
 }
 
-ClangdIndexHeaderInclusion::ClangdIndexHeaderInclusion(ClangdIndex &Index,
-    const ClangdIndexFile& IncludedByFile, const ClangdIndexFile& IncludedFile) :
-    Index(Index), Storage(Index.getStorage()) {
+ClangdIndexHeaderInclusion::ClangdIndexHeaderInclusion(ClangdIndexDataStorage &Storage,
+    const ClangdIndexFile& IncludedByFile, const ClangdIndexFile& IncludedFile,
+    ClangdIndex &Index) :
+    Index(Index), Storage(Storage) {
   Record = Storage.mallocRecord(RECORD_SIZE);
   Storage.putRecPtr(Record + INCLUDED_BY_FILE, IncludedByFile.getRecord());
   Storage.putRecPtr(Record + INCLUDED_FILE, IncludedFile.getRecord());
 }
 
-ClangdIndexHeaderInclusion::ClangdIndexHeaderInclusion(ClangdIndex &Index,
-    RecordPointer Record) :
-    Record(Record), Index(Index), Storage(Index.getStorage()) {
+ClangdIndexHeaderInclusion::ClangdIndexHeaderInclusion(ClangdIndexDataStorage &Storage,
+    RecordPointer Record, ClangdIndex &Index) :
+    Record(Record), Index(Index), Storage(Storage) {
 }
 
 std::unique_ptr<ClangdIndexFile> ClangdIndexHeaderInclusion::getIncluded () {
-  return getPtrOrNull<ClangdIndexFile>(Index, Record + INCLUDED_FILE);
+  return getPtrOrNull<ClangdIndexFile>(Storage, Record + INCLUDED_FILE, Index);
 }
 
 std::unique_ptr<ClangdIndexFile> ClangdIndexHeaderInclusion::getIncludedBy () {
-  return getPtrOrNull<ClangdIndexFile>(Index, Record + INCLUDED_BY_FILE);
+  return getPtrOrNull<ClangdIndexFile>(Storage, Record + INCLUDED_BY_FILE, Index);
 }
 
 std::unique_ptr<ClangdIndexHeaderInclusion> ClangdIndexHeaderInclusion::getPrevIncludeBy() {
-  return getPtrOrNull<ClangdIndexHeaderInclusion>(Index, Record + PREV_INCLUDED_BY);
+  return getPtrOrNull<ClangdIndexHeaderInclusion>(Storage, Record + PREV_INCLUDED_BY, Index);
 }
 
 std::unique_ptr<ClangdIndexHeaderInclusion> ClangdIndexHeaderInclusion::getNextIncludeBy() {
-  return getPtrOrNull<ClangdIndexHeaderInclusion>(Index, Record + NEXT_INCLUDED_BY);
+  return getPtrOrNull<ClangdIndexHeaderInclusion>(Storage, Record + NEXT_INCLUDED_BY, Index);
 }
 
 std::unique_ptr<ClangdIndexHeaderInclusion> ClangdIndexHeaderInclusion::getPrevInclusion() {
-  return getPtrOrNull<ClangdIndexHeaderInclusion>(Index, Record + PREV_INCLUDES);
+  return getPtrOrNull<ClangdIndexHeaderInclusion>(Storage, Record + PREV_INCLUDES, Index);
 }
 
 std::unique_ptr<ClangdIndexHeaderInclusion> ClangdIndexHeaderInclusion::getNextInclusion() {
-  return getPtrOrNull<ClangdIndexHeaderInclusion>(Index, Record + NEXT_INCLUDES);
+  return getPtrOrNull<ClangdIndexHeaderInclusion>(Storage, Record + NEXT_INCLUDES, Index);
 }
 
-ClangdIndexFile::ClangdIndexFile(ClangdIndex &Index, std::string Path) :
-    Path(Path), Index(Index), Storage(Index.getStorage()) {
+ClangdIndexFile::ClangdIndexFile(ClangdIndexDataStorage &Storage, std::string Path, ClangdIndex &Index) :
+    Path(Path), Index(Index), Storage(Storage) {
   Record = Storage.mallocRecord(RECORD_SIZE);
   ClangdIndexString Str(Storage, Path);
   Storage.putRecPtr(Record + PATH, Str.getRecord());
 }
 
-ClangdIndexFile::ClangdIndexFile(ClangdIndex &Index, RecordPointer Record) :
-    Record(Record), Index(Index), Storage(Index.getStorage()) {
+ClangdIndexFile::ClangdIndexFile(ClangdIndexDataStorage &Storage, RecordPointer Record, ClangdIndex &Index) :
+    Record(Record), Index(Index), Storage(Storage) {
   assert (Record >= ClangdIndexDataStorage::DATA_AREA);
 }
 
@@ -213,15 +202,15 @@ const std::string& ClangdIndexFile::getPath() {
 }
 
 std::unique_ptr<ClangdIndexOccurrence> ClangdIndexFile::getFirstOccurrence() {
-  return getPtrOrNull<ClangdIndexOccurrence>(Index, Record + FIRST_OCCURRENCE);
+  return getPtrOrNull<ClangdIndexOccurrence>(Storage, Record + FIRST_OCCURRENCE, Index);
 }
 
 std::unique_ptr<ClangdIndexHeaderInclusion> ClangdIndexFile::getFirstIncludedBy() {
-  return getPtrOrNull<ClangdIndexHeaderInclusion>(Index, Record + FIRST_INCLUDED_BY);
+  return getPtrOrNull<ClangdIndexHeaderInclusion>(Storage, Record + FIRST_INCLUDED_BY, Index);
 }
 
 std::unique_ptr<ClangdIndexHeaderInclusion> ClangdIndexFile::getFirstInclusion() {
-  return getPtrOrNull<ClangdIndexHeaderInclusion>(Index, Record + FIRST_INCLUSION);
+  return getPtrOrNull<ClangdIndexHeaderInclusion>(Storage, Record + FIRST_INCLUSION, Index);
 }
 
 void ClangdIndexFile::addOccurrence(ClangdIndexOccurrence &Occurrence) {
@@ -269,13 +258,12 @@ void ClangdIndexFile::clearOccurrences() {
     Occurrence = std::move(NextOccurrence);
   }
   for (auto &I : SymbolsToDeletedOccurrences) {
-    ClangdIndexSymbol Sym(Index, I.first);
+    ClangdIndexSymbol Sym(Storage, I.first, Index);
     auto USR1 = Sym.getUsr();
     assert(!USR1.empty());
-    assert(!Index.getSymbols(USR(USR1)).empty());
   }
   for (auto &I : SymbolsToDeletedOccurrences) {
-    ClangdIndexSymbol Sym(Index, I.first);
+    ClangdIndexSymbol Sym(Storage, I.first, Index);
     Sym.removeOccurrences(I.second);
   }
 
@@ -419,14 +407,14 @@ public:
   }
 
   int compare(RecordPointer Record) override {
-    ClangdIndexSymbol Current(Index, Record);
+    ClangdIndexSymbol Current(Index.getStorage(), Record, Index);
     std::string CurrentUsr = Current.getUsr();
     return CurrentUsr.compare(Usr.c_str());
   }
 
   void visit(RecordPointer Record) override {
     std::unique_ptr<ClangdIndexSymbol> Current = llvm::make_unique<
-        ClangdIndexSymbol>(Index, Record);
+        ClangdIndexSymbol>(Index.getStorage(), Record, Index);
     Result.push_back(std::move(Current));
   }
 
@@ -494,13 +482,13 @@ public:
   }
 
   int compare(RecordPointer Record) override {
-    ClangdIndexFile Current(Index, Record);
+    ClangdIndexFile Current(Index.getStorage(), Record, Index);
     return Current.getPath().compare(FilePath);
   }
 
   void visit(RecordPointer Record) override {
     std::unique_ptr<ClangdIndexFile> Current = llvm::make_unique<
-        ClangdIndexFile>(Index, Record);
+        ClangdIndexFile>(Index.getStorage(), Record, Index);
     Result = std::move(Current);
   }
 
@@ -526,13 +514,13 @@ std::unique_ptr<ClangdIndexFile> ClangdIndex::getFile(
 
 void ClangdIndex::dumpSymbolsTree() {
   getSymbolBTree().dump([this](RecordPointer Rec, llvm::raw_ostream &OS) {
-      OS << ClangdIndexSymbol(*this, Rec).getUsr();
+      OS << ClangdIndexSymbol(Storage, Rec, *this).getUsr();
     }, llvm::errs());
 }
 
 void ClangdIndex::dumpFilesTree() {
   getFilesBTree().dump([this](RecordPointer Rec, llvm::raw_ostream &OS) {
-      OS << ClangdIndexFile(*this, Rec).getPath();
+      OS << ClangdIndexFile(Storage, Rec, *this).getPath();
     }, llvm::errs());
 }
 

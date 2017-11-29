@@ -12,6 +12,7 @@
 
 #include <mutex>
 
+#include "ASTIndex.h"
 #include "ClangdUnit.h"
 #include "GlobalCompilationDatabase.h"
 #include "Path.h"
@@ -25,11 +26,14 @@ class Logger;
 /// Thread-safe mapping from FileNames to CppFile.
 class CppFileCollection {
 public:
+  explicit CppFileCollection(ASTIndexSourcer *IndexSourcer)
+      : IndexSourcer(IndexSourcer) {}
+
   std::shared_ptr<CppFile>
   getOrCreateFile(PathRef File, PathRef ResourceDir,
                   GlobalCompilationDatabase &CDB, bool StorePreamblesInMemory,
                   std::shared_ptr<PCHContainerOperations> PCHs,
-                  clangd::Logger &Logger) {
+                  clangd::Logger &Logger, ASTIndexSourcer *IndexSourcer) {
     std::lock_guard<std::mutex> Lock(Mutex);
 
     auto It = OpenedFiles.find(File);
@@ -39,7 +43,8 @@ public:
       It = OpenedFiles
                .try_emplace(File, CppFile::Create(File, std::move(Command),
                                                   StorePreamblesInMemory,
-                                                  std::move(PCHs), Logger))
+                                                  std::move(PCHs), Logger,
+                                                  IndexSourcer))
                .first;
     }
     return It->second;
@@ -86,6 +91,7 @@ private:
 
   std::mutex Mutex;
   llvm::StringMap<std::shared_ptr<CppFile>> OpenedFiles;
+  ASTIndexSourcer *IndexSourcer;
 };
 } // namespace clangd
 } // namespace clang

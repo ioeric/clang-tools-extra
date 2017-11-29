@@ -3,6 +3,8 @@ set(LLVM_LINK_COMPONENTS
   )
 
 add_clang_library(clangDaemon
+  ASTIndex.cpp
+  ClangdIndex.cpp
   ClangdLSPServer.cpp
   ClangdServer.cpp
   ClangdUnit.cpp

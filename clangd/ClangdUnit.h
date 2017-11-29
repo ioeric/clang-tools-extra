@@ -10,6 +10,8 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_CLANGDUNIT_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_CLANGDUNIT_H
 
+#include "ASTIndex.h"
+#include "ClangdIndex.h"
 #include "Function.h"
 #include "Path.h"
 #include "Protocol.h"
@@ -146,12 +148,14 @@ public:
   static std::shared_ptr<CppFile>
   Create(PathRef FileName, tooling::CompileCommand Command,
          bool StorePreamblesInMemory,
-         std::shared_ptr<PCHContainerOperations> PCHs, clangd::Logger &Logger);
+         std::shared_ptr<PCHContainerOperations> PCHs, clangd::Logger &Logger,
+         ASTIndexSourcer *IndexSourcer);
 
 private:
   CppFile(PathRef FileName, tooling::CompileCommand Command,
           bool StorePreamblesInMemory,
-          std::shared_ptr<PCHContainerOperations> PCHs, clangd::Logger &Logger);
+          std::shared_ptr<PCHContainerOperations> PCHs, clangd::Logger &Logger,
+          ASTIndexSourcer *IndexSourcer);
 
 public:
   CppFile(CppFile const &) = delete;
@@ -209,6 +213,8 @@ public:
   /// Get CompileCommand used to build this CppFile.
   tooling::CompileCommand const &getCompileCommand() const;
 
+  const ASTIndexSourcer &getASTIndexSourcer() { return *IndexSourcer; }
+
 private:
   /// A helper guard that manages the state of CppFile during rebuild.
   class RebuildGuard {
@@ -254,6 +260,8 @@ private:
   std::shared_ptr<PCHContainerOperations> PCHs;
   /// Used for logging various messages.
   clangd::Logger &Logger;
+
+  ASTIndexSourcer *IndexSourcer;
 };
 
 struct CodeCompleteOptions {
@@ -274,7 +282,7 @@ struct CodeCompleteOptions {
   bool IncludeMacros = true;
 
   /// Add globals to code completion results.
-  bool IncludeGlobals = true;
+  bool IncludeGlobals = false;
 
   /// Add brief comments to completion items, if available.
   /// FIXME(ibiryukov): it looks like turning this option on significantly slows
@@ -291,12 +299,14 @@ struct CodeCompleteOptions {
 };
 
 /// Get code completions at a specified \p Pos in \p FileName.
-CompletionList
-codeComplete(PathRef FileName, const tooling::CompileCommand &Command,
-             PrecompiledPreamble const *Preamble, StringRef Contents,
-             Position Pos, IntrusiveRefCntPtr<vfs::FileSystem> VFS,
-             std::shared_ptr<PCHContainerOperations> PCHs,
-             clangd::CodeCompleteOptions Opts, clangd::Logger &Logger);
+CompletionList codeComplete(PathRef FileName,
+                            const tooling::CompileCommand &Command,
+                            PrecompiledPreamble const *Preamble,
+                            StringRef Contents, Position Pos,
+                            IntrusiveRefCntPtr<vfs::FileSystem> VFS,
+                            std::shared_ptr<PCHContainerOperations> PCHs,
+                            clangd::CodeCompleteOptions Opts,
+                            clangd::Logger &Logger, const SymbolIndex &Index);
 
 /// Get signature help at a specified \p Pos in \p FileName.
 SignatureHelp signatureHelp(PathRef FileName,

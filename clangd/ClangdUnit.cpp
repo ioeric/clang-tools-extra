@@ -9,6 +9,7 @@
 
 #include "ClangdUnit.h"
 
+#include "ClangdServer.h"
 #include "Logger.h"
 #include "Trace.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -436,17 +437,24 @@ private:
 class CompletionItemsCollector : public CodeCompleteConsumer {
 public:
   CompletionItemsCollector(const clangd::CodeCompleteOptions &CodeCompleteOpts,
-                           CompletionList &Items)
+                           CompletionList &Items, const SymbolIndex &Index)
       : CodeCompleteConsumer(CodeCompleteOpts.getClangCompleteOpts(),
                              /*OutputIsBinary=*/false),
         ClangdOpts(CodeCompleteOpts), Items(Items),
         Allocator(std::make_shared<clang::GlobalCodeCompletionAllocator>()),
-        CCTUInfo(Allocator) {}
+        CCTUInfo(Allocator), Index(Index) {}
 
   void ProcessCodeCompleteResults(Sema &S, CodeCompletionContext Context,
                                   CodeCompletionResult *Results,
                                   unsigned NumResults) override final {
     std::priority_queue<CompletionCandidate> Candidates;
+    if (auto OptSS = Context.getCXXScopeSpecifier()) {
+      if (NumResults > 0)
+        llvm::errs() << "[CompletionItemsCollector] Expect no completion "
+                        "result for qualified/global completion. Got "
+                     << NumResults << " results.\n";
+      return doGlobalCompletion(S, **OptSS);
+    }
     for (unsigned I = 0; I < NumResults; ++I) {
       auto &Result = Results[I];
       if (!ClangdOpts.IncludeIneligibleResults &&
@@ -498,6 +506,77 @@ private:
     return Item;
   }
 
+  void doGlobalCompletion(Sema &S, const CXXScopeSpec &SS) {
+    llvm::errs() << "[QualifiedCompletion]\n";
+    std::string WrittenSS =
+        Lexer::getSourceText(CharSourceRange::getCharRange(SS.getRange()),
+                             S.getSourceManager(), clang::LangOptions());
+
+    if (SS.isInvalid()) {
+      llvm::errs() << "  Invalid SS: [" << WrittenSS << "]";
+    } else {
+      llvm::errs() << "  Valid SS: [" << WrittenSS << "]";
+    }
+    std::string InferredSpecifier;
+    if (SS.isValid()) {
+      llvm::errs() << "  Got CXXScopeSpec.\n";
+      DeclContext *DC = S.computeDeclContext(SS);
+      if (auto *NS = llvm::dyn_cast<NamespaceDecl>(DC)) {
+        InferredSpecifier = NS->getQualifiedNameAsString();
+        llvm::errs() << "  Namespace: " << InferredSpecifier << "\n";
+      } else if (auto *TU = llvm::dyn_cast<TranslationUnitDecl>(DC)) {
+        InferredSpecifier = "";
+        llvm::errs() << "  TU\n";
+      }
+    }
+
+    if (InferredSpecifier != WrittenSS)
+      llvm::errs() << "WriitenSS != InferredSpecifier: [" << WrittenSS
+                   << "] vs [" << InferredSpecifier << "]\n";
+
+    std::string Query =
+        InferredSpecifier.empty() ? WrittenSS : InferredSpecifier;
+    auto Filter = S.getPreprocessor().getCodeCompletionFilter();
+    if (!Filter.empty())
+      Query += "::" + Filter.str();
+    llvm::errs() << "  Query: [" << Query << "], "
+                 << "Filter: [" << Filter << "]\n";
+    CompletionRequest Req;
+    Req.Query = Query;
+    llvm::Expected<CompletionResult> Result = Index.complete(Req);
+    if (!Result) {
+      llvm::errs() << "  Failed to complete [" << Req.Query
+                   << "]. Error: " << llvm::toString(Result.takeError())
+                   << "\n";
+      return;
+    }
+    for (unsigned i = 0; i < Result->Symbols.size(); ++i) {
+      CompletionItem item;
+      llvm::StringRef QualifiedName = Result->Symbols[i];
+      item.label = QualifiedName;
+      item.kind = CompletionItemKind::Class;
+      item.detail = QualifiedName;
+      TextEdit Edit;
+      Edit.newText = llvm::StringRef(WrittenSS).startswith("::")
+                         ? ("::" + QualifiedName).str()
+                         : QualifiedName.str();
+      SourceRange SR = SS.getRange();
+      auto &SM = S.getSourceManager();
+      FileID FID = SM.getFileID(SR.getBegin());
+      const auto *FE = SM.getFileEntryForID(FID);
+      llvm::MemoryBuffer *Buffer = SM.getMemoryBufferForFile(FE);
+      llvm::StringRef Code = Buffer->getBuffer();
+      Edit.range.start =
+          offsetToPosition(Code, SM.getFileOffset(SR.getBegin()));
+      Edit.range.end = offsetToPosition(Code, SM.getFileOffset(SR.getEnd()));
+      item.textEdit = std::move(Edit);
+      item.sortText = std::to_string(i);
+      item.insertTextFormat = InsertTextFormat::PlainText;
+      Items.items.push_back(std::move(item));
+    }
+    Items.isIncomplete = true;
+  }
+
   virtual void ProcessChunks(const CodeCompletionString &CCS,
                              CompletionItem &Item) const = 0;
 
@@ -505,7 +584,7 @@ private:
   CompletionList &Items;
   std::shared_ptr<clang::GlobalCodeCompletionAllocator> Allocator;
   CodeCompletionTUInfo CCTUInfo;
-
+  const SymbolIndex &Index;
 }; // CompletionItemsCollector
 
 bool isInformativeQualifierChunk(CodeCompletionString::Chunk const &Chunk) {
@@ -519,8 +598,8 @@ class PlainTextCompletionItemsCollector final
 public:
   PlainTextCompletionItemsCollector(
       const clangd::CodeCompleteOptions &CodeCompleteOpts,
-      CompletionList &Items)
-      : CompletionItemsCollector(CodeCompleteOpts, Items) {}
+      CompletionList &Items, const SymbolIndex &Index)
+      : CompletionItemsCollector(CodeCompleteOpts, Items, Index) {}
 
 private:
   void ProcessChunks(const CodeCompletionString &CCS,
@@ -556,8 +635,8 @@ class SnippetCompletionItemsCollector final : public CompletionItemsCollector {
 public:
   SnippetCompletionItemsCollector(
       const clangd::CodeCompleteOptions &CodeCompleteOpts,
-      CompletionList &Items)
-      : CompletionItemsCollector(CodeCompleteOpts, Items) {}
+      CompletionList &Items, const SymbolIndex &Index)
+      : CompletionItemsCollector(CodeCompleteOpts, Items, Index) {}
 
 private:
   void ProcessChunks(const CodeCompletionString &CCS,
@@ -839,15 +918,16 @@ clangd::codeComplete(PathRef FileName, const tooling::CompileCommand &Command,
                      PrecompiledPreamble const *Preamble, StringRef Contents,
                      Position Pos, IntrusiveRefCntPtr<vfs::FileSystem> VFS,
                      std::shared_ptr<PCHContainerOperations> PCHs,
-                     clangd::CodeCompleteOptions Opts, clangd::Logger &Logger) {
+                     clangd::CodeCompleteOptions Opts, clangd::Logger &Logger,
+                     const SymbolIndex &Index) {
   CompletionList Results;
   std::unique_ptr<CodeCompleteConsumer> Consumer;
   if (Opts.EnableSnippets) {
-    Consumer =
-        llvm::make_unique<SnippetCompletionItemsCollector>(Opts, Results);
+    Consumer = llvm::make_unique<SnippetCompletionItemsCollector>(Opts, Results,
+                                                                  Index);
   } else {
-    Consumer =
-        llvm::make_unique<PlainTextCompletionItemsCollector>(Opts, Results);
+    Consumer = llvm::make_unique<PlainTextCompletionItemsCollector>(
+        Opts, Results, Index);
   }
   invokeCodeComplete(std::move(Consumer), Opts.getClangCompleteOpts(), FileName,
                      Command, Preamble, Contents, Pos, std::move(VFS),
@@ -1136,19 +1216,23 @@ std::shared_ptr<CppFile>
 CppFile::Create(PathRef FileName, tooling::CompileCommand Command,
                 bool StorePreamblesInMemory,
                 std::shared_ptr<PCHContainerOperations> PCHs,
-                clangd::Logger &Logger) {
-  return std::shared_ptr<CppFile>(new CppFile(FileName, std::move(Command),
-                                              StorePreamblesInMemory,
-                                              std::move(PCHs), Logger));
+                clangd::Logger &Logger, ASTIndexSourcer *IndexSourcer) {
+  return std::shared_ptr<CppFile>(
+      new CppFile(FileName, std::move(Command), StorePreamblesInMemory,
+                  std::move(PCHs), Logger, IndexSourcer));
 }
 
 CppFile::CppFile(PathRef FileName, tooling::CompileCommand Command,
                  bool StorePreamblesInMemory,
                  std::shared_ptr<PCHContainerOperations> PCHs,
-                 clangd::Logger &Logger)
+                 clangd::Logger &Logger, ASTIndexSourcer *IndexSourcer)
     : FileName(FileName), Command(std::move(Command)),
       StorePreamblesInMemory(StorePreamblesInMemory), RebuildCounter(0),
-      RebuildInProgress(false), PCHs(std::move(PCHs)), Logger(Logger) {
+      RebuildInProgress(false), PCHs(std::move(PCHs)), Logger(Logger),
+      IndexSourcer(IndexSourcer) {
+
+  llvm::errs() << "[Completion] Creating CppFile " << FileName
+               << " with IndexSourcer: " << IndexSourcer << "\n";
 
   std::lock_guard<std::mutex> Lock(Mutex);
   LatestAvailablePreamble = nullptr;
@@ -1345,6 +1429,8 @@ CppFile::deferRebuild(StringRef NewContents,
     if (NewAST) {
       Diagnostics.insert(Diagnostics.end(), NewAST->getDiagnostics().begin(),
                          NewAST->getDiagnostics().end());
+      That->IndexSourcer->update(That->FileName, NewAST->getASTContext(),
+                                 NewAST->getTopLevelDecls());
     } else {
       // Don't report even Preamble diagnostics if we coulnd't build AST.
       Diagnostics.clear();

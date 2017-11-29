@@ -10,6 +10,7 @@
 #include "ClangdUnit.h"
 
 #include "Compiler.h"
+#include "ClangdServer.h"
 #include "Logger.h"
 #include "Trace.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -424,22 +425,25 @@ std::shared_ptr<CppFile>
 CppFile::Create(PathRef FileName, tooling::CompileCommand Command,
                 bool StorePreamblesInMemory,
                 std::shared_ptr<PCHContainerOperations> PCHs,
-                clangd::Logger &Logger) {
-  return std::shared_ptr<CppFile>(new CppFile(FileName, std::move(Command),
-                                              StorePreamblesInMemory,
-                                              std::move(PCHs), Logger));
+                clangd::Logger &Logger, ASTIndexSourcer *IndexSourcer) {
+  return std::shared_ptr<CppFile>(
+      new CppFile(FileName, std::move(Command), StorePreamblesInMemory,
+                  std::move(PCHs), Logger, IndexSourcer));
 }
 
 CppFile::CppFile(PathRef FileName, tooling::CompileCommand Command,
                  bool StorePreamblesInMemory,
                  std::shared_ptr<PCHContainerOperations> PCHs,
-                 clangd::Logger &Logger)
+                 clangd::Logger &Logger, ASTIndexSourcer *IndexSourcer)
     : FileName(FileName), Command(std::move(Command)),
       StorePreamblesInMemory(StorePreamblesInMemory), RebuildCounter(0),
-      RebuildInProgress(false), PCHs(std::move(PCHs)), Logger(Logger) {
+      RebuildInProgress(false), PCHs(std::move(PCHs)), Logger(Logger),
+      IndexSourcer(IndexSourcer) {
   Logger.log("Opened file " + FileName + " with command [" +
              this->Command.Directory + "] " +
              llvm::join(this->Command.CommandLine, " "));
+  llvm::errs() << "[Completion] Creating CppFile " << FileName
+               << " with IndexSourcer: " << IndexSourcer << "\n";
 
   std::lock_guard<std::mutex> Lock(Mutex);
   LatestAvailablePreamble = nullptr;
@@ -639,6 +643,8 @@ CppFile::deferRebuild(StringRef NewContents,
     if (NewAST) {
       Diagnostics.insert(Diagnostics.end(), NewAST->getDiagnostics().begin(),
                          NewAST->getDiagnostics().end());
+      That->IndexSourcer->update(That->FileName, NewAST->getASTContext(),
+                                 NewAST->getTopLevelDecls());
     } else {
       // Don't report even Preamble diagnostics if we coulnd't build AST.
       Diagnostics.clear();

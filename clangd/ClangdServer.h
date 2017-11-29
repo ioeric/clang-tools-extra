@@ -10,6 +10,7 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_CLANGDSERVER_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_CLANGDSERVER_H
 
+#include "ClangdIndex.h"
 #include "ClangdUnitStore.h"
 #include "DraftStore.h"
 #include "GlobalCompilationDatabase.h"
@@ -207,12 +208,14 @@ public:
   /// clangd are stored in-memory or on disk.
   ///
   /// Various messages are logged using \p Logger.
-  ClangdServer(GlobalCompilationDatabase &CDB,
-               DiagnosticsConsumer &DiagConsumer,
-               FileSystemProvider &FSProvider, unsigned AsyncThreadsCount,
-               bool StorePreamblesInMemory,
-               clangd::Logger &Logger,
-               llvm::Optional<StringRef> ResourceDir = llvm::None);
+  ClangdServer(
+      GlobalCompilationDatabase &CDB, DiagnosticsConsumer &DiagConsumer,
+      FileSystemProvider &FSProvider, unsigned AsyncThreadsCount,
+      bool StorePreamblesInMemory, clangd::Logger &Logger,
+      std::vector<
+          std::pair<llvm::StringRef, CombinedSymbolIndex::WeightedIndex>>
+          AdditionalIndexes,
+      llvm::Optional<StringRef> ResourceDir = llvm::None);
 
   /// Set the root path of the workspace.
   void setRootPath(PathRef RootPath);
@@ -323,7 +326,10 @@ private:
   DiagnosticsConsumer &DiagConsumer;
   FileSystemProvider &FSProvider;
   DraftStore DraftMgr;
+
+  ASTIndexSourcer IndexSourcer;
   CppFileCollection Units;
+
   std::string ResourceDir;
   // If set, this represents the workspace path.
   llvm::Optional<std::string> RootPath;
@@ -339,6 +345,8 @@ private:
   // called before all other members to stop the worker thread that references
   // ClangdServer
   ClangdScheduler WorkScheduler;
+
+  CombinedSymbolIndex CombinedIndex;
 };
 
 } // namespace clangd

@@ -169,18 +169,27 @@ ClangdScheduler::~ClangdScheduler() {
     Worker.join();
 }
 
-ClangdServer::ClangdServer(GlobalCompilationDatabase &CDB,
-                           DiagnosticsConsumer &DiagConsumer,
-                           FileSystemProvider &FSProvider,
-                           unsigned AsyncThreadsCount,
-                           bool StorePreamblesInMemory, clangd::Logger &Logger,
-                           llvm::Optional<StringRef> ResourceDir)
+ClangdServer::ClangdServer(
+    GlobalCompilationDatabase &CDB, DiagnosticsConsumer &DiagConsumer,
+    FileSystemProvider &FSProvider, unsigned AsyncThreadsCount,
+    bool StorePreamblesInMemory, clangd::Logger &Logger,
+    std::vector<std::pair<llvm::StringRef, CombinedSymbolIndex::WeightedIndex>>
+        AdditionalIndexes,
+    llvm::Optional<StringRef> ResourceDir)
     : Logger(Logger), CDB(CDB), DiagConsumer(DiagConsumer),
-      FSProvider(FSProvider),
+      FSProvider(FSProvider), Units(&IndexSourcer),
       ResourceDir(ResourceDir ? ResourceDir->str() : getStandardResourceDir()),
       PCHs(std::make_shared<PCHContainerOperations>()),
       StorePreamblesInMemory(StorePreamblesInMemory),
-      WorkScheduler(AsyncThreadsCount) {}
+      WorkScheduler(AsyncThreadsCount) {
+  CombinedSymbolIndex::WeightedIndex WeightedASTIndex(
+      llvm::make_unique<ASTSymbolIndex>(&IndexSourcer));
+  WeightedASTIndex.OverallWeight = 10;
+  CombinedIndex.addSymbolIndex("AST", std::move(WeightedASTIndex));
+  for (auto &Index : AdditionalIndexes) {
+    CombinedIndex.addSymbolIndex(Index.first, std::move(Index.second));
+  }
+}
 
 void ClangdServer::setRootPath(PathRef RootPath) {
   std::string NewRootPath = llvm::sys::path::convert_to_slash(
@@ -193,8 +202,9 @@ std::future<void> ClangdServer::addDocument(PathRef File, StringRef Contents) {
   DocVersion Version = DraftMgr.updateDraft(File, Contents);
 
   auto TaggedFS = FSProvider.getTaggedFileSystem(File);
-  std::shared_ptr<CppFile> Resources = Units.getOrCreateFile(
-      File, ResourceDir, CDB, StorePreamblesInMemory, PCHs, Logger);
+  std::shared_ptr<CppFile> Resources =
+      Units.getOrCreateFile(File, ResourceDir, CDB, StorePreamblesInMemory,
+                            PCHs, Logger, &IndexSourcer);
   return scheduleReparseAndDiags(File, VersionedDraft{Version, Contents.str()},
                                  std::move(Resources), std::move(TaggedFS));
 }
@@ -289,7 +299,7 @@ void ClangdServer::codeComplete(
         CompletionList Result = clangd::codeComplete(
             File, Resources->getCompileCommand(),
             Preamble ? &Preamble->Preamble : nullptr, Contents, Pos,
-            TaggedFS.Value, PCHs, CodeCompleteOpts, Logger);
+            TaggedFS.Value, PCHs, CodeCompleteOpts, Logger, CombinedIndex);
 
         Callback(make_tagged(std::move(Result), std::move(TaggedFS.Tag)));
       };

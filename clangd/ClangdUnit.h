@@ -10,6 +10,8 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_CLANGDUNIT_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_CLANGDUNIT_H
 
+#include "ASTIndex.h"
+#include "ClangdIndex.h"
 #include "Function.h"
 #include "Path.h"
 #include "Protocol.h"
@@ -146,12 +148,14 @@ public:
   static std::shared_ptr<CppFile>
   Create(PathRef FileName, tooling::CompileCommand Command,
          bool StorePreamblesInMemory,
-         std::shared_ptr<PCHContainerOperations> PCHs, clangd::Logger &Logger);
+         std::shared_ptr<PCHContainerOperations> PCHs, clangd::Logger &Logger,
+         ASTIndexSourcer *IndexSourcer);
 
 private:
   CppFile(PathRef FileName, tooling::CompileCommand Command,
           bool StorePreamblesInMemory,
-          std::shared_ptr<PCHContainerOperations> PCHs, clangd::Logger &Logger);
+          std::shared_ptr<PCHContainerOperations> PCHs, clangd::Logger &Logger,
+          ASTIndexSourcer *IndexSourcer);
 
 public:
   CppFile(CppFile const &) = delete;
@@ -209,6 +213,8 @@ public:
   /// Get CompileCommand used to build this CppFile.
   tooling::CompileCommand const &getCompileCommand() const;
 
+  const ASTIndexSourcer &getASTIndexSourcer() { return *IndexSourcer; }
+
 private:
   /// A helper guard that manages the state of CppFile during rebuild.
   class RebuildGuard {
@@ -254,8 +260,9 @@ private:
   std::shared_ptr<PCHContainerOperations> PCHs;
   /// Used for logging various messages.
   clangd::Logger &Logger;
-};
 
+  ASTIndexSourcer *IndexSourcer;
+};
 
 /// Get the beginning SourceLocation at a specified \p Pos.
 SourceLocation getBeginningOfIdentifier(ParsedAST &Unit, const Position &Pos,

@@ -235,15 +235,18 @@ void ClangdLSPServer::onSwitchSourceHeader(Ctx C,
   C.reply(Result ? URI::fromFile(*Result).uri : "");
 }
 
-ClangdLSPServer::ClangdLSPServer(JSONOutput &Out, unsigned AsyncThreadsCount,
-                                 bool StorePreamblesInMemory,
-                                 const clangd::CodeCompleteOptions &CCOpts,
-                                 llvm::Optional<StringRef> ResourceDir,
-                                 llvm::Optional<Path> CompileCommandsDir)
+ClangdLSPServer::ClangdLSPServer(
+    JSONOutput &Out, unsigned AsyncThreadsCount, bool StorePreamblesInMemory,
+    const clangd::CodeCompleteOptions &CCOpts,
+    llvm::Optional<StringRef> ResourceDir,
+    llvm::Optional<Path> CompileCommandsDir,
+    std::vector<std::pair<llvm::StringRef, CombinedSymbolIndex::WeightedIndex>>
+        AdditionalIndexes)
     : Out(Out), CDB(/*Logger=*/Out, std::move(CompileCommandsDir)),
-      CCOpts(CCOpts), Server(CDB, /*DiagConsumer=*/*this, FSProvider,
-                             AsyncThreadsCount, StorePreamblesInMemory,
-                             /*Logger=*/Out, ResourceDir) {}
+      CCOpts(CCOpts),
+      Server(CDB, /*DiagConsumer=*/*this, FSProvider, AsyncThreadsCount,
+             StorePreamblesInMemory,
+             /*Logger=*/Out, std::move(AdditionalIndexes), ResourceDir) {}
 
 bool ClangdLSPServer::run(std::istream &In) {
   assert(!IsDone && "Run was called before");

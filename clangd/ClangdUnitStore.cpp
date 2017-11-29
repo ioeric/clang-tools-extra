@@ -23,6 +23,7 @@ std::shared_ptr<CppFile> CppFileCollection::removeIfPresent(PathRef File) {
 
   std::shared_ptr<CppFile> Result = It->second;
   OpenedFiles.erase(It);
+  IndexSourcer->remove(File);
   return Result;
 }
 
@@ -42,14 +43,15 @@ CppFileCollection::recreateFileIfCompileCommandChanged(
     It = OpenedFiles
              .try_emplace(File, CppFile::Create(File, std::move(NewCommand),
                                                 StorePreamblesInMemory,
-                                                std::move(PCHs), Logger))
+                                                std::move(PCHs), Logger,
+                                                IndexSourcer))
              .first;
   } else if (!compileCommandsAreEqual(It->second->getCompileCommand(),
                                       NewCommand)) {
     Result.RemovedFile = std::move(It->second);
     It->second =
         CppFile::Create(File, std::move(NewCommand), StorePreamblesInMemory,
-                        std::move(PCHs), Logger);
+                        std::move(PCHs), Logger, IndexSourcer);
   }
   Result.FileInCollection = It->second;
   return Result;

@@ -11,6 +11,7 @@ add_clang_library(clangDaemon
   ClangdUnitStore.cpp
   DraftStore.cpp
   GlobalCompilationDatabase.cpp
+  GlobalIndex.cpp
   JSONExpr.cpp
   JSONRPCDispatcher.cpp
   Logger.cpp
@@ -30,6 +31,7 @@ add_clang_library(clangDaemon
   clangTooling
   clangToolingCore
   clangToolingRefactor
+  indexSource
   ${LLVM_PTHREAD_LIB}
   )
 
@@ -37,3 +39,4 @@ if( LLVM_LIB_FUZZING_ENGINE OR LLVM_USE_SANITIZE_COVERAGE )
   add_subdirectory(fuzzer)
 endif()
 add_subdirectory(tool)
+add_subdirectory(index-source-builder)

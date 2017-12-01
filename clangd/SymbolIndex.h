@@ -17,6 +17,7 @@ namespace clangd {
 
 struct CompletionRequest {
   std::string Query;
+  std::string Filter;
   std::vector<std::string> FixedPrefixes;
 };
 

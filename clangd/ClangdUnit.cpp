@@ -448,6 +448,10 @@ public:
                                   CodeCompletionResult *Results,
                                   unsigned NumResults) override final {
     std::priority_queue<CompletionCandidate> Candidates;
+    if (!Context.getCXXScopeSpecifier()) {
+      llvm::errs() << "can't get global scope specifier.\n";
+      llvm::errs() << "results: " << NumResults << "\n";
+    }
     if (auto OptSS = Context.getCXXScopeSpecifier()) {
       if (NumResults > 0)
         llvm::errs() << "[CompletionItemsCollector] Expect no completion "
@@ -537,12 +541,13 @@ private:
     std::string Query =
         InferredSpecifier.empty() ? WrittenSS : InferredSpecifier;
     auto Filter = S.getPreprocessor().getCodeCompletionFilter();
-    if (!Filter.empty())
-      Query += "::" + Filter.str();
+    //if (!Filter.empty())
+      //Query += "::" + Filter.str();
     llvm::errs() << "  Query: [" << Query << "], "
                  << "Filter: [" << Filter << "]\n";
     CompletionRequest Req;
     Req.Query = Query;
+    Req.Filter = Filter;
     llvm::Expected<CompletionResult> Result = Index.complete(Req);
     if (!Result) {
       llvm::errs() << "  Failed to complete [" << Req.Query

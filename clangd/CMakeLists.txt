@@ -11,6 +11,7 @@ add_clang_library(clangDaemon
   ClangdUnitStore.cpp
   DraftStore.cpp
   GlobalCompilationDatabase.cpp
+  GlobalIndex.cpp
   JSONExpr.cpp
   JSONRPCDispatcher.cpp
   Logger.cpp
@@ -30,6 +31,7 @@ add_clang_library(clangDaemon
   clangTooling
   clangToolingCore
   clangToolingRefactor
+  indexSource
   ${LLVM_PTHREAD_LIB}
   )
 

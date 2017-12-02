@@ -10,6 +10,7 @@ add_clang_library(clangDaemon
   ClangdUnit.cpp
   ClangdUnitStore.cpp
   DraftStore.cpp
+  FuzzyMatch.cpp
   GlobalCompilationDatabase.cpp
   GlobalIndex.cpp
   JSONExpr.cpp

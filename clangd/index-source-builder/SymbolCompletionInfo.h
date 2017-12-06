@@ -19,6 +19,7 @@ struct SymbolCompletionInfo {
   std::string Documentation;
   std::string Detail;
   std::string Informative;
+  std::vector<std::string> Params;
 };
 
 }  // clangd

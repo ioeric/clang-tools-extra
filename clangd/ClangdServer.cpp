@@ -173,21 +173,29 @@ ClangdServer::ClangdServer(
     GlobalCompilationDatabase &CDB, DiagnosticsConsumer &DiagConsumer,
     FileSystemProvider &FSProvider, unsigned AsyncThreadsCount,
     bool StorePreamblesInMemory, clangd::Logger &Logger,
+    bool EnableIndexBasedCodeCompletion,
     std::vector<std::pair<llvm::StringRef, CombinedSymbolIndex::WeightedIndex>>
         AdditionalIndexes,
     llvm::Optional<StringRef> ResourceDir)
     : Logger(Logger), CDB(CDB), DiagConsumer(DiagConsumer),
-      FSProvider(FSProvider), Units(&IndexSourcer),
+      FSProvider(FSProvider),
+      IndexSourcer(EnableIndexBasedCodeCompletion ? new ASTIndexSourcer()
+                                                  : nullptr),
+      Units(IndexSourcer.get()),
       ResourceDir(ResourceDir ? ResourceDir->str() : getStandardResourceDir()),
       PCHs(std::make_shared<PCHContainerOperations>()),
       StorePreamblesInMemory(StorePreamblesInMemory),
       WorkScheduler(AsyncThreadsCount) {
-  CombinedSymbolIndex::WeightedIndex WeightedASTIndex(
-      llvm::make_unique<ASTSymbolIndex>(&IndexSourcer));
-  WeightedASTIndex.OverallWeight = 10;
-  CombinedIndex.addSymbolIndex("AST", std::move(WeightedASTIndex));
-  for (auto &Index : AdditionalIndexes) {
-    CombinedIndex.addSymbolIndex(Index.first, std::move(Index.second));
+  if (EnableIndexBasedCodeCompletion) {
+    assert(IndexSourcer.get() && "IndexSourcer must be set when index-based "
+                                 "code completion is enabled.");
+    CombinedSymbolIndex::WeightedIndex WeightedASTIndex(
+        llvm::make_unique<SimpleSymbolIndex>(IndexSourcer.get()));
+    WeightedASTIndex.OverallWeight = 10;
+    CombinedIndex.reset(new CombinedSymbolIndex());
+    CombinedIndex->addSymbolIndex("AST", std::move(WeightedASTIndex));
+    for (auto &Index : AdditionalIndexes)
+      CombinedIndex->addSymbolIndex(Index.first, std::move(Index.second));
   }
 }
 
@@ -204,7 +212,7 @@ std::future<void> ClangdServer::addDocument(PathRef File, StringRef Contents) {
   auto TaggedFS = FSProvider.getTaggedFileSystem(File);
   std::shared_ptr<CppFile> Resources =
       Units.getOrCreateFile(File, ResourceDir, CDB, StorePreamblesInMemory,
-                            PCHs, Logger, &IndexSourcer);
+                            PCHs, Logger, IndexSourcer.get());
   return scheduleReparseAndDiags(File, VersionedDraft{Version, Contents.str()},
                                  std::move(Resources), std::move(TaggedFS));
 }
@@ -299,7 +307,7 @@ void ClangdServer::codeComplete(
         CompletionList Result = clangd::codeComplete(
             File, Resources->getCompileCommand(),
             Preamble ? &Preamble->Preamble : nullptr, Contents, Pos,
-            TaggedFS.Value, PCHs, CodeCompleteOpts, Logger, &CombinedIndex);
+            TaggedFS.Value, PCHs, CodeCompleteOpts, Logger, CombinedIndex.get());
 
         Callback(make_tagged(std::move(Result), std::move(TaggedFS.Tag)));
       };

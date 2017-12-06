@@ -240,13 +240,14 @@ ClangdLSPServer::ClangdLSPServer(
     const clangd::CodeCompleteOptions &CCOpts,
     llvm::Optional<StringRef> ResourceDir,
     llvm::Optional<Path> CompileCommandsDir,
+    bool EnableIndexBasedCodeCompletion,
     std::vector<std::pair<llvm::StringRef, CombinedSymbolIndex::WeightedIndex>>
         AdditionalIndexes)
     : Out(Out), CDB(/*Logger=*/Out, std::move(CompileCommandsDir)),
-      CCOpts(CCOpts),
-      Server(CDB, /*DiagConsumer=*/*this, FSProvider, AsyncThreadsCount,
-             StorePreamblesInMemory,
-             /*Logger=*/Out, std::move(AdditionalIndexes), ResourceDir) {}
+      CCOpts(CCOpts), Server(CDB, /*DiagConsumer=*/*this, FSProvider,
+                             AsyncThreadsCount, StorePreamblesInMemory,
+                             /*Logger=*/Out, EnableIndexBasedCodeCompletion,
+                             std::move(AdditionalIndexes), ResourceDir) {}
 
 bool ClangdLSPServer::run(std::istream &In) {
   assert(!IsDone && "Run was called before");

@@ -212,6 +212,7 @@ public:
       GlobalCompilationDatabase &CDB, DiagnosticsConsumer &DiagConsumer,
       FileSystemProvider &FSProvider, unsigned AsyncThreadsCount,
       bool StorePreamblesInMemory, clangd::Logger &Logger,
+      bool EnableIndexBasedCodeCompletion,
       std::vector<
           std::pair<llvm::StringRef, CombinedSymbolIndex::WeightedIndex>>
           AdditionalIndexes,
@@ -327,7 +328,7 @@ private:
   FileSystemProvider &FSProvider;
   DraftStore DraftMgr;
 
-  ASTIndexSourcer IndexSourcer;
+  std::unique_ptr<ASTIndexSourcer> IndexSourcer;
   CppFileCollection Units;
 
   std::string ResourceDir;
@@ -346,7 +347,7 @@ private:
   // ClangdServer
   ClangdScheduler WorkScheduler;
 
-  CombinedSymbolIndex CombinedIndex;
+  std::unique_ptr<CombinedSymbolIndex> CombinedIndex;
 };
 
 } // namespace clangd

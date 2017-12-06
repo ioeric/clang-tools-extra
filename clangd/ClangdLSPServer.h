@@ -35,6 +35,7 @@ public:
       const clangd::CodeCompleteOptions &CCOpts,
       llvm::Optional<StringRef> ResourceDir,
       llvm::Optional<Path> CompileCommandsDir,
+      bool EnableIndexBasedCodeCompletion,
       std::vector<
           std::pair<llvm::StringRef, CombinedSymbolIndex::WeightedIndex>>
           AdditionalIndexes);

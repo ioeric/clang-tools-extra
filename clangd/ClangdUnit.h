@@ -10,7 +10,7 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_CLANGDUNIT_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_CLANGDUNIT_H
 
-#include "ASTIndex.h"
+#include "ClangdIndex.h"
 #include "Function.h"
 #include "Path.h"
 #include "Protocol.h"

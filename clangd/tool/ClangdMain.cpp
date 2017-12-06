@@ -8,7 +8,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "ClangdLSPServer.h"
-#include "GlobalIndex.h"
 #include "JSONRPCDispatcher.h"
 #include "Path.h"
 #include "Trace.h"
@@ -91,6 +90,15 @@ static llvm::cl::opt<Path> TraceFile(
         "Trace internal events and timestamps in chrome://tracing JSON format"),
     llvm::cl::init(""), llvm::cl::Hidden);
 
+static llvm::cl::opt<bool> EnableIndexBasedCompletion(
+    "enable-index-based-completion",
+    llvm::cl::desc(
+        "Enable index-based global code completion (experimental). Clangd will "
+        "use symbols built from ASTs of opened files and additional indexes "
+        "(e.g. offline built codebase-wide symbol table) to complete partial "
+        "symbols."),
+    llvm::cl::init(false));
+
 int main(int argc, char *argv[]) {
   llvm::cl::ParseCommandLineOptions(argc, argv, "clangd");
 
@@ -171,19 +179,14 @@ int main(int argc, char *argv[]) {
   clangd::CodeCompleteOptions CCOpts;
   CCOpts.EnableSnippets = EnableSnippets;
   CCOpts.IncludeIneligibleResults = IncludeIneligibleResults;
-  // Disable sema code completion for qualified code completion and use global
-  // symbol index instead.
-  CCOpts.IncludeGlobals = false;
-  CombinedSymbolIndex::WeightedIndex WeightedGlobalIndex(
-      llvm::make_unique<GlobalSymbolIndex>());
-  WeightedGlobalIndex.OverallWeight = 10;
-  std::vector<std::pair<llvm::StringRef, CombinedSymbolIndex::WeightedIndex>>
-      AddtionalIndexes;
-  AddtionalIndexes.emplace_back("LLVM", std::move(WeightedGlobalIndex));
+  if (EnableIndexBasedCompletion)
+    // Disable sema code completion for qualified code completion and use global
+    // symbol index instead.
+    CCOpts.IncludeGlobals = false;
   // Initialize and run ClangdLSPServer.
   ClangdLSPServer LSPServer(Out, WorkerThreadsCount, StorePreamblesInMemory,
                             CCOpts, ResourceDirRef, CompileCommandsDirPath,
-                            std::move(AddtionalIndexes));
+                            EnableIndexBasedCompletion, {});
   constexpr int NoShutdownRequestErrorCode = 1;
   llvm::set_thread_name("clangd.main");
   return LSPServer.run(std::cin) ? 0 : NoShutdownRequestErrorCode;

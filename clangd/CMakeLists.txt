@@ -3,7 +3,6 @@ set(LLVM_LINK_COMPONENTS
   )
 
 add_clang_library(clangDaemon
-  ASTIndex.cpp
   ClangdIndex.cpp
   ClangdLSPServer.cpp
   ClangdServer.cpp
@@ -14,7 +13,6 @@ add_clang_library(clangDaemon
   DraftStore.cpp
   FuzzyMatch.cpp
   GlobalCompilationDatabase.cpp
-  GlobalIndex.cpp
   JSONExpr.cpp
   JSONRPCDispatcher.cpp
   Logger.cpp

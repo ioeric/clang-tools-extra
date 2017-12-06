@@ -229,6 +229,91 @@ private:
   }
 };
 
+CompletionItem
+completionSymbolToCompletionItem(const CompletionSymbol &Sym,
+                                 bool FullyQualified, SourceManager &SM,
+                                 SourceRange SpecifierRange) {
+  CompletionItem Item;
+  if (FullyQualified)
+    Item.label = "::";
+  Item.label += Sym.CompletionInfo.Label.empty() ? Sym.QualifiedName
+                                                 : Sym.CompletionInfo.Label;
+  Item.kind = CompletionItemKind::Class;
+  Item.detail = Sym.CompletionInfo.Detail;
+  Item.documentation = Sym.CompletionInfo.Documentation;
+  TextEdit Edit;
+  Edit.newText =
+      FullyQualified ? ("::" + Sym.QualifiedName) : Sym.QualifiedName;
+  FileID FID = SM.getFileID(SpecifierRange.getBegin());
+  const auto *FE = SM.getFileEntryForID(FID);
+  llvm::MemoryBuffer *Buffer = SM.getMemoryBufferForFile(FE);
+  llvm::StringRef Code = Buffer->getBuffer();
+  Edit.range.start =
+      offsetToPosition(Code, SM.getFileOffset(SpecifierRange.getBegin()));
+  Edit.range.end =
+      offsetToPosition(Code, SM.getFileOffset(SpecifierRange.getEnd()));
+  Item.textEdit = std::move(Edit);
+  Item.insertTextFormat = InsertTextFormat::PlainText;
+  return Item;
+}
+
+void qualifiedIdCompletionWithIndex(const SymbolIndex &Index, Sema &S,
+                                    const CXXScopeSpec &SS,
+                                    CompletionList *Items) {
+  std::string WrittenSS =
+      Lexer::getSourceText(CharSourceRange::getCharRange(SS.getRange()),
+                           S.getSourceManager(), clang::LangOptions());
+  std::string InferredSpecifier;
+  if (SS.isValid()) {
+    llvm::errs() << "  Got CXXScopeSpec.\n";
+    DeclContext *DC = S.computeDeclContext(SS);
+    if (auto *NS = llvm::dyn_cast<NamespaceDecl>(DC)) {
+      InferredSpecifier = NS->getQualifiedNameAsString();
+      llvm::errs() << "  Namespace: " << InferredSpecifier << "\n";
+    } else if (auto *TU = llvm::dyn_cast<TranslationUnitDecl>(DC)) {
+      InferredSpecifier = "::";
+      WrittenSS = "::";
+      llvm::errs() << "  TU\n";
+    }
+  }
+
+  if (InferredSpecifier != WrittenSS)
+    llvm::errs() << "WriitenSS != InferredSpecifier: [" << WrittenSS << "] vs ["
+                 << InferredSpecifier << "]\n";
+
+  std::string Query = InferredSpecifier.empty() ? WrittenSS : InferredSpecifier;
+  auto Filter = S.getPreprocessor().getCodeCompletionFilter();
+  llvm::errs() << "  Query: [" << Query << "], "
+               << "Filter: [" << Filter << "]\n";
+  CompletionRequest Req;
+  Req.Query = Query;
+  Req.Filter = Filter;
+  if (!InferredSpecifier.empty())
+    Req.FixedPrefixes.push_back(InferredSpecifier);
+
+  llvm::Expected<CompletionResult> Result = Index.complete(Req);
+  if (!Result) {
+    // FIXME(ioeric): consider falling back to sema code completion.
+    llvm::errs() << "  Failed to complete [" << Req.Query
+                 << "]. Error: " << llvm::toString(Result.takeError()) << "\n";
+    return;
+  }
+  llvm::errs() << "Completion candidates: " << Result->Symbols.size()
+               << " reuslts."
+               << "\n";
+  for (unsigned int i = 0; i < Result->Symbols.size(); ++i) {
+    const auto &Sym = Result->Symbols[i];
+    llvm::errs() << "--- Candidate: " << Sym.QualifiedName << ",  "
+                 << Sym.CompletionInfo.Documentation << "---\n";
+    CompletionItem Item = completionSymbolToCompletionItem(
+        Sym, StringRef(WrittenSS).startswith("::"), S.getSourceManager(),
+        SS.getRange());
+    Item.sortText = std::to_string(i);
+    Items->items.push_back(std::move(Item));
+  }
+  Items->isIncomplete = true;
+}
+
 class CompletionItemsCollector : public CodeCompleteConsumer {
 public:
   CompletionItemsCollector(const CodeCompleteOptions &CodeCompleteOpts,
@@ -244,12 +329,15 @@ public:
                                   CodeCompletionResult *Results,
                                   unsigned NumResults) override final {
     StringRef Filter = S.getPreprocessor().getCodeCompletionFilter();
-    if (auto OptSS = Context.getCXXScopeSpecifier()) {
-      if (NumResults > 0)
-        llvm::errs() << "[CompletionItemsCollector] Expect no completion "
-                        "result for qualified/global completion. Got "
-                     << NumResults << " results.\n";
-      return doGlobalCompletion(S, **OptSS);
+    if (Index) {
+      if (auto OptSS = Context.getCXXScopeSpecifier()) {
+        if (NumResults > 0)
+          llvm::errs() << "[CompletionItemsCollector] Expect no completion "
+                          "result for qualified/global completion. Got "
+                       << NumResults << " results.\n";
+        qualifiedIdCompletionWithIndex(*Index, S, **OptSS, &Items);
+        return;
+      }
     }
     std::priority_queue<CompletionCandidate> Candidates;
     for (unsigned I = 0; I < NumResults; ++I) {
@@ -336,85 +424,6 @@ private:
     Item.kind = getKind(Candidate.Result->Kind, Candidate.Result->CursorKind);
 
     return Item;
-  }
-
-  void doGlobalCompletion(Sema &S, const CXXScopeSpec &SS) {
-    llvm::errs() << "[QualifiedCompletion]\n";
-    std::string WrittenSS =
-        Lexer::getSourceText(CharSourceRange::getCharRange(SS.getRange()),
-                             S.getSourceManager(), clang::LangOptions());
-
-    if (SS.isInvalid()) {
-      llvm::errs() << "  Invalid SS: [" << WrittenSS << "]";
-    } else {
-      llvm::errs() << "  Valid SS: [" << WrittenSS << "]";
-    }
-    std::string InferredSpecifier;
-    if (SS.isValid()) {
-      llvm::errs() << "  Got CXXScopeSpec.\n";
-      DeclContext *DC = S.computeDeclContext(SS);
-      if (auto *NS = llvm::dyn_cast<NamespaceDecl>(DC)) {
-        InferredSpecifier = NS->getQualifiedNameAsString();
-        llvm::errs() << "  Namespace: " << InferredSpecifier << "\n";
-      } else if (auto *TU = llvm::dyn_cast<TranslationUnitDecl>(DC)) {
-        InferredSpecifier = "";
-        llvm::errs() << "  TU\n";
-      }
-    }
-
-    if (InferredSpecifier != WrittenSS)
-      llvm::errs() << "WriitenSS != InferredSpecifier: [" << WrittenSS
-                   << "] vs [" << InferredSpecifier << "]\n";
-
-    std::string Query =
-        InferredSpecifier.empty() ? WrittenSS : InferredSpecifier;
-    auto Filter = S.getPreprocessor().getCodeCompletionFilter();
-    //if (!Filter.empty())
-      //Query += "::" + Filter.str();
-    llvm::errs() << "  Query: [" << Query << "], "
-                 << "Filter: [" << Filter << "]\n";
-    CompletionRequest Req;
-    Req.Query = Query;
-    Req.Filter = Filter;
-    llvm::Expected<CompletionResult> Result = Index->complete(Req);
-    if (!Result) {
-      llvm::errs() << "  Failed to complete [" << Req.Query
-                   << "]. Error: " << llvm::toString(Result.takeError())
-                   << "\n";
-      return;
-    }
-    llvm::errs() << "Completion candidates: " << Result->Symbols.size()
-                 << " reuslts."
-                 << "\n";
-    for (unsigned int i = 0; i < Result->Symbols.size(); ++i) {
-      const auto &Sym = Result->Symbols[i];
-      llvm::errs() << "--- Candidate: " << Sym.QualifiedName << ",  "
-                   << Sym.CompletionInfo.Documentation << "---\n";
-      CompletionItem item;
-      item.label = Sym.CompletionInfo.Label.empty() ? Sym.QualifiedName
-                                                    : Sym.CompletionInfo.Label;
-      item.kind = CompletionItemKind::Class;
-      item.detail = Sym.CompletionInfo.Detail;
-      item.documentation = Sym.CompletionInfo.Documentation;
-      TextEdit Edit;
-      Edit.newText = llvm::StringRef(WrittenSS).startswith("::")
-                         ? ("::" + Sym.QualifiedName)
-                         : Sym.QualifiedName;
-      SourceRange SR = SS.getRange();
-      auto &SM = S.getSourceManager();
-      FileID FID = SM.getFileID(SR.getBegin());
-      const auto *FE = SM.getFileEntryForID(FID);
-      llvm::MemoryBuffer *Buffer = SM.getMemoryBufferForFile(FE);
-      llvm::StringRef Code = Buffer->getBuffer();
-      Edit.range.start =
-          offsetToPosition(Code, SM.getFileOffset(SR.getBegin()));
-      Edit.range.end = offsetToPosition(Code, SM.getFileOffset(SR.getEnd()));
-      item.textEdit = std::move(Edit);
-      item.sortText = std::to_string(i);
-      item.insertTextFormat = InsertTextFormat::PlainText;
-      Items.items.push_back(std::move(item));
-    }
-    Items.isIncomplete = true;
   }
 
   virtual void ProcessChunks(const CodeCompletionString &CCS,

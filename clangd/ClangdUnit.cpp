@@ -644,9 +644,10 @@ CppFile::deferRebuild(StringRef NewContents,
     if (NewAST) {
       Diagnostics.insert(Diagnostics.end(), NewAST->getDiagnostics().begin(),
                          NewAST->getDiagnostics().end());
-      That->IndexSourcer->update(That->FileName, NewAST->getASTContext(),
-                                 NewAST->getPreprocessorPtr(),
-                                 NewAST->getTopLevelDecls());
+      if (That->IndexSourcer)
+        That->IndexSourcer->update(That->FileName, NewAST->getASTContext(),
+                                   NewAST->getPreprocessorPtr(),
+                                   NewAST->getTopLevelDecls());
     } else {
       // Don't report even Preamble diagnostics if we coulnd't build AST.
       Diagnostics.clear();

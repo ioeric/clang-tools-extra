@@ -23,7 +23,9 @@ std::shared_ptr<CppFile> CppFileCollection::removeIfPresent(PathRef File) {
 
   std::shared_ptr<CppFile> Result = It->second;
   OpenedFiles.erase(It);
-  IndexSourcer->remove(File);
+  if (IndexSourcer) {
+    IndexSourcer->remove(File);
+  }
   return Result;
 }
 

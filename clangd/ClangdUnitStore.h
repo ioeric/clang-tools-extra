@@ -12,7 +12,7 @@
 
 #include <mutex>
 
-#include "ASTIndex.h"
+#include "ClangdIndex.h"
 #include "ClangdUnit.h"
 #include "GlobalCompilationDatabase.h"
 #include "Path.h"

@@ -50,10 +50,10 @@ public:
   complete(const CompletionRequest &Req) const = 0;
 
   virtual llvm::Expected<std::string>
-  getSymbolInfo(llvm::StringRef UID) const = 0;
+  getSymbolInfo(llvm::StringRef USR) const = 0;
 
   virtual llvm::Expected<std::vector<std::string>>
-  getAllOccurrences(llvm::StringRef UID) const = 0;
+  getAllOccurrences(llvm::StringRef USR) const = 0;
 };
 
 } // namespace clangd

@@ -15,6 +15,7 @@
 //===---------------------------------------------------------------------===//
 
 #include "CodeComplete.h"
+#include "ClangdServer.h"
 #include "Compiler.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -390,34 +391,15 @@ private:
       llvm::errs() << "--- Candidate: " << Sym.QualifiedName << ",  "
                    << Sym.CompletionInfo.Documentation << "---\n";
       CompletionItem item;
-      llvm::StringRef QualifiedName = Sym.QualifiedName;
-      item.label = QualifiedName.str();
-      if (Sym.Kind == index::SymbolKind::Function ||
-          Sym.Kind == index::SymbolKind::ClassMethod ||
-          Sym.Kind == index::SymbolKind::InstanceMethod ||
-          Sym.Kind == index::SymbolKind::StaticMethod) {
-        item.label += "(";
-      }
-      for (unsigned int k = 0; k < Sym.CompletionInfo.Params.size(); k++) {
-        if (k > 0)
-          item.label += ", ";
-
-        item.label += Sym.CompletionInfo.Params[k];
-      }
-      if (Sym.Kind == index::SymbolKind::Function ||
-          Sym.Kind == index::SymbolKind::ClassMethod ||
-          Sym.Kind == index::SymbolKind::InstanceMethod ||
-          Sym.Kind == index::SymbolKind::StaticMethod) {
-        item.label += ")";
-      }
-      item.label += Sym.CompletionInfo.Informative;
+      item.label = Sym.CompletionInfo.Label.empty() ? Sym.QualifiedName
+                                                    : Sym.CompletionInfo.Label;
       item.kind = CompletionItemKind::Class;
       item.detail = Sym.CompletionInfo.Detail;
       item.documentation = Sym.CompletionInfo.Documentation;
       TextEdit Edit;
       Edit.newText = llvm::StringRef(WrittenSS).startswith("::")
-                         ? ("::" + QualifiedName).str()
-                         : QualifiedName.str();
+                         ? ("::" + Sym.QualifiedName)
+                         : Sym.QualifiedName;
       SourceRange SR = SS.getRange();
       auto &SM = S.getSourceManager();
       FileID FID = SM.getFileID(SR.getBegin());
@@ -457,8 +439,9 @@ class PlainTextCompletionItemsCollector final
 
 public:
   PlainTextCompletionItemsCollector(const CodeCompleteOptions &CodeCompleteOpts,
-                                    CompletionList &Items)
-      : CompletionItemsCollector(CodeCompleteOpts, Items) {}
+                                    CompletionList &Items,
+                                    const SymbolIndex *Index)
+      : CompletionItemsCollector(CodeCompleteOpts, Items, Index) {}
 
 private:
   void ProcessChunks(const CodeCompletionString &CCS,
@@ -493,8 +476,9 @@ class SnippetCompletionItemsCollector final : public CompletionItemsCollector {
 
 public:
   SnippetCompletionItemsCollector(const CodeCompleteOptions &CodeCompleteOpts,
-                                  CompletionList &Items)
-      : CompletionItemsCollector(CodeCompleteOpts, Items) {}
+                                  CompletionList &Items,
+                                  const SymbolIndex *Index)
+      : CompletionItemsCollector(CodeCompleteOpts, Items, Index) {}
 
 private:
   void ProcessChunks(const CodeCompletionString &CCS,

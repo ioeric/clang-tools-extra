@@ -35,16 +35,6 @@ std::string getDocumentation(const CodeCompletionString &CCS) {
   }
   return Result;
 }
-std::string escapeSnippet(const llvm::StringRef Text) {
-  std::string Result;
-  Result.reserve(Text.size()); // Assume '$', '}' and '\\' are rare.
-  for (const auto Character : Text) {
-    if (Character == '$' || Character == '}' || Character == '\\')
-      Result.push_back('\\');
-    Result.push_back(Character);
-  }
-  return Result;
-}
 
 void ProcessChunks(const CodeCompletionString &CCS,
                           SymbolCompletionInfo *Info) {
@@ -65,7 +55,7 @@ void ProcessChunks(const CodeCompletionString &CCS,
       LLVM_FALLTHROUGH;
     case CodeCompletionString::CK_Text:
       // A piece of text that should be placed in the buffer,
-      //Info->Label += Chunk.Text;
+      Info->Label += Chunk.Text;
       break;
     case CodeCompletionString::CK_Optional:
       // A code completion string that is entirely optional.
@@ -83,15 +73,14 @@ void ProcessChunks(const CodeCompletionString &CCS,
 
       //Info->InsertText += "${" + std::to_string(ArgCount) + ':' +
       //                    escapeSnippet(Chunk.Text) + '}';
-      Info->Params.push_back(Chunk.Text);
-      //Info->Label += Chunk.Text;
+      Info->Label += Chunk.Text;
       break;
     case CodeCompletionString::CK_Informative:
       // A piece of text that describes something about the result
       // but should not be inserted into the buffer.
       // For example, the word "const" for a const method, or the name of
       // the base class for methods that are part of the base class.
-      //Info->Label += Chunk.Text;
+      Info->Label += Chunk.Text;
       Info->Informative += Chunk.Text;
       // Don't put the informative chunks in the insertText.
       break;
@@ -138,7 +127,7 @@ void ProcessChunks(const CodeCompletionString &CCS,
     case CodeCompletionString::CK_HorizontalSpace:
       // Horizontal whitespace (' ').
       // Info->InsertText += Chunk.Text;
-      //Info->Label += Chunk.Text;
+      Info->Label += Chunk.Text;
       break;
     case CodeCompletionString::CK_VerticalSpace:
       // Vertical whitespace ('\n' or '\r\n', depending on the
@@ -149,6 +138,25 @@ void ProcessChunks(const CodeCompletionString &CCS,
     }
   }
 }
+
+inline std::string
+joinNamespaces(const llvm::SmallVectorImpl<StringRef> &Namespaces) {
+  if (Namespaces.empty())
+    return "";
+  std::string Result = Namespaces.front();
+  for (auto I = Namespaces.begin() + 1, E = Namespaces.end(); I != E; ++I)
+    Result += ("::" + *I).str();
+  return Result;
+}
+
+// Given "a::b::c", returns {"a", "b", "c"}.
+llvm::SmallVector<llvm::StringRef, 4> splitSymbolName(llvm::StringRef Name) {
+  llvm::SmallVector<llvm::StringRef, 4> Splitted;
+  Name.split(Splitted, "::", /*MaxSplit=*/-1,
+             /*KeepEmpty=*/false);
+  return Splitted;
+}
+
 } // namespace
 
 SymbolCompletionInfo SymbolCompletionInfo::create(ASTContext &Ctx,
@@ -162,7 +170,17 @@ SymbolCompletionInfo SymbolCompletionInfo::create(ASTContext &Ctx,
       /*IncludeBriefComments*/ true);
   SymbolCompletionInfo Info;
   Info.Documentation = getDocumentation(*CCS);
+
   ProcessChunks(*CCS, &Info);
+  // Since symbol names in CCS labels are not qualified, we prepend a namespace
+  // qualfifier.
+  std::string QualifiedName = ND->getQualifiedNameAsString();
+  auto SplittedNames = splitSymbolName(QualifiedName);
+  if (SplittedNames.size() > 1) {
+    std::string LabelPrefix = joinNamespaces(SmallVector<llvm::StringRef, 4>(
+        SplittedNames.begin(), SplittedNames.end() - 1));
+    Info.Label = LabelPrefix + "::" + Info.Label;
+  }
   return Info;
 }
 

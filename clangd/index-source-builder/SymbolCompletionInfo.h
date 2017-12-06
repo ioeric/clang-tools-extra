@@ -15,10 +15,10 @@ struct SymbolCompletionInfo {
                                      const NamedDecl *ND);
 
   index::SymbolKind Kind;
+  std::string Label;
   std::string Documentation;
   std::string Detail;
   std::string Informative;
-  std::vector<std::string> Params;
 };
 
 }  // clangd

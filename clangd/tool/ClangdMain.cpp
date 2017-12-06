@@ -177,11 +177,13 @@ int main(int argc, char *argv[]) {
   CombinedSymbolIndex::WeightedIndex WeightedGlobalIndex(
       llvm::make_unique<GlobalSymbolIndex>());
   WeightedGlobalIndex.OverallWeight = 10;
+  std::vector<std::pair<llvm::StringRef, CombinedSymbolIndex::WeightedIndex>>
+      AddtionalIndexes;
+  AddtionalIndexes.emplace_back("LLVM", std::move(WeightedGlobalIndex));
   // Initialize and run ClangdLSPServer.
   ClangdLSPServer LSPServer(Out, WorkerThreadsCount, StorePreamblesInMemory,
                             CCOpts, ResourceDirRef, CompileCommandsDirPath,
-                            {std::make_pair(llvm::StringRef("LLVM"),
-                                            std::move(WeightedGlobalIndex))});
+                            std::move(AddtionalIndexes));
   constexpr int NoShutdownRequestErrorCode = 1;
   llvm::set_thread_name("clangd.main");
   return LSPServer.run(std::cin) ? 0 : NoShutdownRequestErrorCode;

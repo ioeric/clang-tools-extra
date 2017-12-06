@@ -299,7 +299,7 @@ void ClangdServer::codeComplete(
         CompletionList Result = clangd::codeComplete(
             File, Resources->getCompileCommand(),
             Preamble ? &Preamble->Preamble : nullptr, Contents, Pos,
-            TaggedFS.Value, PCHs, CodeCompleteOpts, Logger, CombinedIndex);
+            TaggedFS.Value, PCHs, CodeCompleteOpts, Logger, &CombinedIndex);
 
         Callback(make_tagged(std::move(Result), std::move(TaggedFS.Tag)));
       };

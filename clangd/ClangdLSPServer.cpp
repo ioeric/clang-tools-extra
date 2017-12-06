@@ -194,14 +194,15 @@ void ClangdLSPServer::onCodeAction(Ctx C, CodeActionParams &Params) {
 }
 
 void ClangdLSPServer::onCompletion(Ctx C, TextDocumentPositionParams &Params) {
-  auto List = Server
-                  .codeComplete(
-                      Params.textDocument.uri.file,
-                      Position{Params.position.line, Params.position.character})
-                  .get() // FIXME(ibiryukov): This could be made async if we
-                         // had an API that would allow to attach callbacks to
-                         // futures returned by ClangdServer.
-                  .Value;
+  auto List =
+      Server
+          .codeComplete(
+              Params.textDocument.uri.file,
+              Position{Params.position.line, Params.position.character}, CCOpts)
+          .get() // FIXME(ibiryukov): This could be made async if we
+                 // had an API that would allow to attach callbacks to
+                 // futures returned by ClangdServer.
+          .Value;
   C.reply(List);
 }
 
@@ -242,8 +243,9 @@ ClangdLSPServer::ClangdLSPServer(
     std::vector<std::pair<llvm::StringRef, CombinedSymbolIndex::WeightedIndex>>
         AdditionalIndexes)
     : Out(Out), CDB(/*Logger=*/Out, std::move(CompileCommandsDir)),
+      CCOpts(CCOpts),
       Server(CDB, /*DiagConsumer=*/*this, FSProvider, AsyncThreadsCount,
-             StorePreamblesInMemory, CCOpts,
+             StorePreamblesInMemory,
              /*Logger=*/Out, std::move(AdditionalIndexes), ResourceDir) {}
 
 bool ClangdLSPServer::run(std::istream &In) {

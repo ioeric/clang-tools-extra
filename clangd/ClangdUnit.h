@@ -11,7 +11,6 @@
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_CLANGDUNIT_H
 
 #include "ASTIndex.h"
-#include "ClangdIndex.h"
 #include "Function.h"
 #include "Path.h"
 #include "Protocol.h"
@@ -265,6 +264,7 @@ private:
   ASTIndexSourcer *IndexSourcer;
 };
 
+<<<<<<< HEAD
 struct CodeCompleteOptions {
   /// Returns options that can be passed to clang's completion engine.
   clang::CodeCompleteOptions getClangCompleteOpts() const;
@@ -317,6 +317,8 @@ SignatureHelp signatureHelp(PathRef FileName,
                             IntrusiveRefCntPtr<vfs::FileSystem> VFS,
                             std::shared_ptr<PCHContainerOperations> PCHs,
                             clangd::Logger &Logger);
+=======
+>>>>>>> origin/master
 
 /// Get the beginning SourceLocation at a specified \p Pos.
 SourceLocation getBeginningOfIdentifier(ParsedAST &Unit, const Position &Pos,

@@ -8,7 +8,6 @@
 //===-------------------------------------------------------------------===//
 
 #include "ClangdServer.h"
-#include "GlobalIndex.h"
 #include "clang/Format/Format.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/CompilerInvocation.h"
@@ -173,8 +172,7 @@ ClangdScheduler::~ClangdScheduler() {
 ClangdServer::ClangdServer(
     GlobalCompilationDatabase &CDB, DiagnosticsConsumer &DiagConsumer,
     FileSystemProvider &FSProvider, unsigned AsyncThreadsCount,
-    bool StorePreamblesInMemory,
-    const clangd::CodeCompleteOptions &CodeCompleteOpts, clangd::Logger &Logger,
+    bool StorePreamblesInMemory, clangd::Logger &Logger,
     std::vector<std::pair<llvm::StringRef, CombinedSymbolIndex::WeightedIndex>>
         AdditionalIndexes,
     llvm::Optional<StringRef> ResourceDir)
@@ -183,15 +181,11 @@ ClangdServer::ClangdServer(
       ResourceDir(ResourceDir ? ResourceDir->str() : getStandardResourceDir()),
       PCHs(std::make_shared<PCHContainerOperations>()),
       StorePreamblesInMemory(StorePreamblesInMemory),
-      CodeCompleteOpts(CodeCompleteOpts), WorkScheduler(AsyncThreadsCount) {
+      WorkScheduler(AsyncThreadsCount) {
   CombinedSymbolIndex::WeightedIndex WeightedASTIndex(
       llvm::make_unique<ASTSymbolIndex>(&IndexSourcer));
   WeightedASTIndex.OverallWeight = 10;
   CombinedIndex.addSymbolIndex("AST", std::move(WeightedASTIndex));
-  //CombinedSymbolIndex::WeightedIndex WeightedGlobalIndex(
-  //    llvm::make_unique<GlobalSymbolIndex>());
-  //WeightedGlobalIndex.OverallWeight = 10;
-  //CombinedIndex.addSymbolIndex("Global", std::move(WeightedGlobalIndex));
   for (auto &Index : AdditionalIndexes) {
     CombinedIndex.addSymbolIndex(Index.first, std::move(Index.second));
   }
@@ -240,6 +234,7 @@ std::future<void> ClangdServer::forceReparse(PathRef File) {
 
 std::future<Tagged<CompletionList>>
 ClangdServer::codeComplete(PathRef File, Position Pos,
+                           const clangd::CodeCompleteOptions &Opts,
                            llvm::Optional<StringRef> OverridenContents,
                            IntrusiveRefCntPtr<vfs::FileSystem> *UsedFS) {
   using ResultType = Tagged<CompletionList>;
@@ -253,13 +248,14 @@ ClangdServer::codeComplete(PathRef File, Position Pos,
 
   std::future<ResultType> ResultFuture = ResultPromise.get_future();
   codeComplete(BindWithForward(Callback, std::move(ResultPromise)), File, Pos,
-               OverridenContents, UsedFS);
+               Opts, OverridenContents, UsedFS);
   return ResultFuture;
 }
 
 void ClangdServer::codeComplete(
     UniqueFunction<void(Tagged<CompletionList>)> Callback, PathRef File,
-    Position Pos, llvm::Optional<StringRef> OverridenContents,
+    Position Pos, const clangd::CodeCompleteOptions &Opts,
+    llvm::Optional<StringRef> OverridenContents,
     IntrusiveRefCntPtr<vfs::FileSystem> *UsedFS) {
   using CallbackType = UniqueFunction<void(Tagged<CompletionList>)>;
 
@@ -287,6 +283,8 @@ void ClangdServer::codeComplete(
   // is reusable in completion more often.
   std::shared_ptr<const PreambleData> Preamble =
       Resources->getPossiblyStalePreamble();
+  // Copy completion options for passing them to async task handler.
+  auto CodeCompleteOpts = Opts;
   // A task that will be run asynchronously.
   auto Task =
       // 'mutable' to reassign Preamble variable.

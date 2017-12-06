@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ClangdLSPServer.h"
+#include "GlobalIndex.h"
 #include "JSONRPCDispatcher.h"
 #include "Path.h"
 #include "Trace.h"
@@ -170,9 +171,17 @@ int main(int argc, char *argv[]) {
   clangd::CodeCompleteOptions CCOpts;
   CCOpts.EnableSnippets = EnableSnippets;
   CCOpts.IncludeIneligibleResults = IncludeIneligibleResults;
+  // Disable sema code completion for qualified code completion and use global
+  // symbol index instead.
+  CCOpts.IncludeGlobals = false;
+  CombinedSymbolIndex::WeightedIndex WeightedGlobalIndex(
+      llvm::make_unique<GlobalSymbolIndex>());
+  WeightedGlobalIndex.OverallWeight = 10;
   // Initialize and run ClangdLSPServer.
   ClangdLSPServer LSPServer(Out, WorkerThreadsCount, StorePreamblesInMemory,
-                            CCOpts, ResourceDirRef, CompileCommandsDirPath, {});
+                            CCOpts, ResourceDirRef, CompileCommandsDirPath,
+                            {std::make_pair(llvm::StringRef("LLVM"),
+                                            std::move(WeightedGlobalIndex))});
   constexpr int NoShutdownRequestErrorCode = 1;
   llvm::set_thread_name("clangd.main");
   return LSPServer.run(std::cin) ? 0 : NoShutdownRequestErrorCode;

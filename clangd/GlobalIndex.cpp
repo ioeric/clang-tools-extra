@@ -26,8 +26,8 @@ std::pair<StringRef, StringRef> Split(StringRef S, StringRef Separator) {
   size_t Idx = S.rfind(Separator);
   if (Idx == StringRef::npos)
     return std::make_pair(S, llvm::StringRef());
-  return std::make_pair(S.slice(0, Idx), S.slice(Idx+1, StringRef::npos));
-
+  return std::make_pair(S.slice(0, Idx),
+                        S.slice(Idx + Separator.size(), StringRef::npos));
 }
 
 } // namespace

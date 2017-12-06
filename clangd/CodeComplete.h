@@ -18,6 +18,7 @@
 #include "Logger.h"
 #include "Path.h"
 #include "Protocol.h"
+#include "SymbolIndex.h"
 #include "clang/Frontend/PrecompiledPreamble.h"
 #include "clang/Sema/CodeCompleteOptions.h"
 #include "clang/Tooling/CompilationDatabase.h"
@@ -67,7 +68,8 @@ CompletionList codeComplete(PathRef FileName,
                             StringRef Contents, Position Pos,
                             IntrusiveRefCntPtr<vfs::FileSystem> VFS,
                             std::shared_ptr<PCHContainerOperations> PCHs,
-                            CodeCompleteOptions Opts, Logger &Logger);
+                            CodeCompleteOptions Opts, Logger &Logger,
+                            const SymbolIndex &Index);
 
 /// Get signature help at a specified \p Pos in \p FileName.
 SignatureHelp

@@ -9,6 +9,7 @@ add_clang_executable(index-source-builder
   )
 
 target_link_libraries(index-source-builder
+  PRIVATE
   clangAST
   clangIndex
   clangBasic

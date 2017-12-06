@@ -591,12 +591,62 @@ private:
                    << "\n";
       return;
     }
-    for (unsigned i = 0; i < Result->Symbols.size(); ++i) {
+    llvm::errs() << "Completion candidates: " << Result->Symbols.size()
+                 << " reuslts."
+                 << "\n";
+    // for (unsigned i = 0; i < Result->Symbols.size(); ++i) {
+    //  CompletionItem item;
+    //  llvm::StringRef QualifiedName = Result->Symbols[i].QualifiedName;
+    //  item.label = QualifiedName;
+    //  item.kind = CompletionItemKind::Class;
+    //  item.detail = QualifiedName;
+    //  TextEdit Edit;
+    //  Edit.newText = llvm::StringRef(WrittenSS).startswith("::")
+    //                     ? ("::" + QualifiedName).str()
+    //                     : QualifiedName.str();
+    //  SourceRange SR = SS.getRange();
+    //  auto &SM = S.getSourceManager();
+    //  FileID FID = SM.getFileID(SR.getBegin());
+    //  const auto *FE = SM.getFileEntryForID(FID);
+    //  llvm::MemoryBuffer *Buffer = SM.getMemoryBufferForFile(FE);
+    //  llvm::StringRef Code = Buffer->getBuffer();
+    //  Edit.range.start =
+    //      offsetToPosition(Code, SM.getFileOffset(SR.getBegin()));
+    //  Edit.range.end = offsetToPosition(Code, SM.getFileOffset(SR.getEnd()));
+    //  item.textEdit = std::move(Edit);
+    //  item.sortText = std::to_string(i);
+    //  item.insertTextFormat = InsertTextFormat::PlainText;
+    //  Items.items.push_back(std::move(item));
+    //}
+    for (unsigned int i = 0; i < Result->Symbols.size(); ++i) {
+      const auto &Sym = Result->Symbols[i];
+      llvm::errs() << "--- Candidate: " << Sym.QualifiedName << ",  "
+                   << Sym.CompletionInfo.Documentation << "---\n";
       CompletionItem item;
-      llvm::StringRef QualifiedName = Result->Symbols[i];
-      item.label = QualifiedName;
+      llvm::StringRef QualifiedName = Sym.QualifiedName;
+      item.label = QualifiedName.str();
+      if (Sym.Kind == index::SymbolKind::Function ||
+          Sym.Kind == index::SymbolKind::ClassMethod ||
+          Sym.Kind == index::SymbolKind::InstanceMethod ||
+          Sym.Kind == index::SymbolKind::StaticMethod) {
+        item.label += "(";
+      }
+      for (unsigned int k = 0; k < Sym.CompletionInfo.Params.size(); k++) {
+        if (k > 0)
+          item.label += ", ";
+
+        item.label += Sym.CompletionInfo.Params[k];
+      }
+      if (Sym.Kind == index::SymbolKind::Function ||
+          Sym.Kind == index::SymbolKind::ClassMethod ||
+          Sym.Kind == index::SymbolKind::InstanceMethod ||
+          Sym.Kind == index::SymbolKind::StaticMethod) {
+        item.label += ")";
+      }
+      item.label += Sym.CompletionInfo.Informative;
       item.kind = CompletionItemKind::Class;
-      item.detail = QualifiedName;
+      item.detail = Sym.CompletionInfo.Detail;
+      item.documentation = Sym.CompletionInfo.Documentation;
       TextEdit Edit;
       Edit.newText = llvm::StringRef(WrittenSS).startswith("::")
                          ? ("::" + QualifiedName).str()
@@ -1215,6 +1265,10 @@ const ASTContext &ParsedAST::getASTContext() const {
 
 Preprocessor &ParsedAST::getPreprocessor() { return Clang->getPreprocessor(); }
 
+std::shared_ptr<Preprocessor> ParsedAST::getPreprocessorPtr() {
+  return Clang->getPreprocessorPtr();
+}
+
 const Preprocessor &ParsedAST::getPreprocessor() const {
   return Clang->getPreprocessor();
 }
@@ -1471,6 +1525,7 @@ CppFile::deferRebuild(StringRef NewContents,
       Diagnostics.insert(Diagnostics.end(), NewAST->getDiagnostics().begin(),
                          NewAST->getDiagnostics().end());
       That->IndexSourcer->update(That->FileName, NewAST->getASTContext(),
+                                 NewAST->getPreprocessorPtr(),
                                  NewAST->getTopLevelDecls());
     } else {
       // Don't report even Preamble diagnostics if we coulnd't build AST.

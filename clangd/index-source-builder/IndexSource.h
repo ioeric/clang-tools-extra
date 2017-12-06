@@ -1,11 +1,12 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_SOURCE_BUILDER_INDEX_SOURCE_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_INDEX_SOURCE_BUILDER_INDEX_SOURCE_H
 
+#include "SymbolCompletionInfo.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Frontend/FrontendActions.h"
-#include "clang/Index/IndexingAction.h"
-#include "clang/Index/IndexSymbol.h"
 #include "clang/Index/IndexDataConsumer.h"
+#include "clang/Index/IndexSymbol.h"
+#include "clang/Index/IndexingAction.h"
 #include "clang/Tooling/Execution.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/YAMLTraits.h"
@@ -49,23 +50,12 @@ struct Symbol {
   // foo.cc. The "foo.h" header location would be the preferred location.
   SymbolLocation PreferredLocation;
 
-  enum class InfoKinds {
-    // The doc-comment about the symbol.
-    Documentation = 0,
-    // The type information about then symbol.
-    TypedText = 1,
-    // ...others
-  };
-
-  static const int NumInfoKinds = 2;
-  // Extra information of the symbol, used in codeCompletion.
-  std::string ExtraInfo[NumInfoKinds];
-
   // Some extra fields for computing index scoring signals? These signals could
   // be computed when index_builder builds its index from the source.
   // The number of files in the codebase where the symbol was used (one per
   // file).
   // int NumOfUsages;
+  SymbolCompletionInfo CompletionInfo;
 };
 
 struct Occurrence {
@@ -94,6 +84,7 @@ std::string ToYAML(
 
 std::vector<SymbolAndOccurrences> ReadFromYAML(llvm::StringRef YAML);
 
+
 // Collect all symbol occurrences from an AST.
 //
 // Clients (e.g. clangd) can use SymbolCollector together with
@@ -104,11 +95,15 @@ class SymbolCollector : public index::IndexDataConsumer {
    SymbolCollector(tooling::ExecutionContext *Context = nullptr)
        : Context(Context) {}
 
-   const std::map<std::string, SymbolAndOccurrences> getSymbols() const {
+   const std::map<std::string, SymbolAndOccurrences> &getSymbols() const {
      return Symbols;
    }
 
    void initialize(ASTContext &Ctx) override;
+
+   void setPreprocessor(std::shared_ptr<Preprocessor> PP) override {
+     this->PP = std::move(PP);
+   }
 
    bool
    handleDeclOccurence(const Decl *D, index::SymbolRoleSet Roles,
@@ -122,6 +117,8 @@ class SymbolCollector : public index::IndexDataConsumer {
   tooling::ExecutionContext* Context;
   std::string Filename;
   std::map<std::string, SymbolAndOccurrences> Symbols;
+  std::shared_ptr<Preprocessor> PP;
+  ASTContext *ASTCtx;
 };
 
 }  // clangd

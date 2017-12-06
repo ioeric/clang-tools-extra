@@ -4,11 +4,12 @@
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Frontend/FrontendActions.h"
-#include "clang/Lex/Lexer.h"
-#include "clang/Index/IndexingAction.h"
-#include "clang/Index/IndexSymbol.h"
 #include "clang/Index/IndexDataConsumer.h"
+#include "clang/Index/IndexSymbol.h"
+#include "clang/Index/IndexingAction.h"
 #include "clang/Index/USRGeneration.h"
+#include "clang/Lex/Lexer.h"
+#include "clang/Sema/CodeCompleteConsumer.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Execution.h"
 #include "clang/Tooling/Refactoring.h"
@@ -17,7 +18,6 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Signals.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -79,6 +79,13 @@ template <> struct MappingTraits<clang::clangd::Occurrence> {
   }
 };
 
+template <> struct MappingTraits<clang::clangd::SymbolCompletionInfo> {
+  static void mapping(IO &io, clang::clangd::SymbolCompletionInfo &value) {
+    io.mapRequired("Documentation", value.Documentation);
+    io.mapRequired("Detail", value.Detail);
+  }
+};
+
 template<> struct MappingTraits<clang::clangd::SymbolAndOccurrences> {
   static void mapping(IO &IO, clang::clangd::SymbolAndOccurrences &Symbol) {
     IO.mapRequired("ID", Symbol.Sym.Identifier);
@@ -89,6 +96,7 @@ template<> struct MappingTraits<clang::clangd::SymbolAndOccurrences> {
     MappingNormalization<NPOccurrenceSet, std::set<Occurrence>> NPOccurrenceSet(
         IO, Symbol.Occurrences);
     IO.mapOptional("Occurrences", NPOccurrenceSet->Occurrences);
+    IO.mapOptional("CompletionInfo", Symbol.Sym.CompletionInfo);
   }
 };
 
@@ -174,6 +182,7 @@ std::vector<SymbolAndOccurrences> ReadFromYAML(llvm::StringRef YAML) {
 }
 
 void SymbolCollector::initialize(ASTContext &Ctx) {
+  ASTCtx = &Ctx;
   auto FID = Ctx.getSourceManager().getMainFileID();
   const auto *Entry = Ctx.getSourceManager().getFileEntryForID(FID);
   Filename = Entry->tryGetRealPathName();
@@ -205,6 +214,10 @@ bool SymbolCollector::handleDeclOccurence(
       NewSymbol.Sym.PreferredLocation.FilePath =
           SM.getFilename(D->getLocation());
       NewSymbol.Sym.QualifiedName = ND->getQualifiedNameAsString();
+      if (PP && ASTCtx) {
+        NewSymbol.Sym.CompletionInfo =
+            SymbolCompletionInfo::create(*ASTCtx, *PP, ND);
+      }
       Symbols[ID].Sym = std::move(NewSymbol.Sym);
       it = Symbols.find(ID);
     }

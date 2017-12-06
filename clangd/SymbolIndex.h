@@ -10,6 +10,7 @@
 #ifndef LLVM_CLANG_TOOLS_EXTRA_CLANGD_COMPLETIONINDEX_H
 #define LLVM_CLANG_TOOLS_EXTRA_CLANGD_COMPLETIONINDEX_H
 
+#include "index-source-builder/SymbolCompletionInfo.h"
 #include "llvm/Support/Error.h"
 
 namespace clang {
@@ -17,6 +18,7 @@ namespace clangd {
 
 struct CompletionRequest {
   std::string Query;
+  std::string Filter;
   std::vector<std::string> FixedPrefixes;
 };
 
@@ -28,12 +30,15 @@ struct CompletionSymbol {
   ScoreSignals Signals;
 
   std::string UID;
+  index::SymbolKind Kind;
   std::string QualifiedName;
+
+  SymbolCompletionInfo CompletionInfo;
 };
 
 struct CompletionResult {
-  //std::vector<CompletionSymbol> Symbol;
-  std::vector<std::string> Symbols;
+  std::vector<CompletionSymbol> Symbols;
+  //std::vector<std::string> Symbols;
   bool all_matched;
 };
 

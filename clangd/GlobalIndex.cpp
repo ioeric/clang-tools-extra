@@ -8,8 +8,9 @@ namespace clangd {
 
 namespace {
 // FIXME: Use your path.
-constexpr char GlobalIndexSource[] = "/path/to/index-source-no-occurrences.yaml";
-constexpr int LimitSize= 100;
+constexpr char GlobalIndexSource[] =
+    "/usr/local/google/home/ioeric/llvm-build/index-source-no-occurrences.yaml";
+constexpr int LimitSize = 100;
 
 // Check if |SubStr| is a subsequence of |SuperStr|.
 bool IsSubSequence(llvm::StringRef SubStr, llvm::StringRef SuperStr) {
@@ -69,7 +70,10 @@ GlobalSymbolIndex::complete(const CompletionRequest &Req) const {
     auto Tokens = Split(S.Sym.QualifiedName, "::");
     if (IsSubSequence(Req.Filter, Tokens.second)) {
       if (Req.Query == Tokens.first) {
-        Result.Symbols.push_back(S.Sym.QualifiedName);
+        CompletionSymbol CS;
+        CS.QualifiedName = S.Sym.QualifiedName;
+        CS.UID = S.Sym.Identifier;
+        Result.Symbols.push_back(std::move(CS));
       }
     }
   }

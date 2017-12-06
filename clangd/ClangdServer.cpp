@@ -188,10 +188,10 @@ ClangdServer::ClangdServer(
       llvm::make_unique<ASTSymbolIndex>(&IndexSourcer));
   WeightedASTIndex.OverallWeight = 10;
   CombinedIndex.addSymbolIndex("AST", std::move(WeightedASTIndex));
-  CombinedSymbolIndex::WeightedIndex WeightedGlobalIndex(
-      llvm::make_unique<GlobalSymbolIndex>());
-  WeightedGlobalIndex.OverallWeight = 10;
-  CombinedIndex.addSymbolIndex("Global", std::move(WeightedGlobalIndex));
+  //CombinedSymbolIndex::WeightedIndex WeightedGlobalIndex(
+  //    llvm::make_unique<GlobalSymbolIndex>());
+  //WeightedGlobalIndex.OverallWeight = 10;
+  //CombinedIndex.addSymbolIndex("Global", std::move(WeightedGlobalIndex));
   for (auto &Index : AdditionalIndexes) {
     CombinedIndex.addSymbolIndex(Index.first, std::move(Index.second));
   }

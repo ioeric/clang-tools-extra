@@ -11,6 +11,7 @@
 
 #include "Path.h"
 #include "SymbolIndex.h"
+#include "index-source-builder/IndexSource.h"
 #include "clang/AST/ASTContext.h"
 #include "llvm/ADT/StringMap.h"
 #include <mutex>
@@ -25,12 +26,13 @@ class ASTIndexSourcer {
    void remove(PathRef Path);
 
    void update(PathRef Path, ASTContext &Context,
+               std::shared_ptr<Preprocessor> PP,
                llvm::ArrayRef<const Decl *> TopLevelDecls);
 
    CompletionResult complete(llvm::StringRef Query) const;
 
  private:
-   llvm::StringMap<std::set<std::string>> Symbols;
+   llvm::StringMap<std::vector<SymbolAndOccurrences>> FileToSymbols;
    mutable std::mutex Mutex;
 };
 

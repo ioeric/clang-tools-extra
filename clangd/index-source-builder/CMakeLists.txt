@@ -3,6 +3,7 @@ set(LLVM_LINK_COMPONENTS
   )
 
 add_clang_library(indexSource
+  SymbolCompletionInfo.cpp
   IndexSource.cpp
 
   LINK_LIBS
@@ -10,6 +11,7 @@ add_clang_library(indexSource
   clangIndex
   clangBasic
   clangFrontend
+  clangSema
   clangTooling
   clangToolingRefactor
   )

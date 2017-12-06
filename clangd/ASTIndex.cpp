@@ -5,59 +5,42 @@
 namespace clang {
 namespace clangd {
 
-namespace {
-
-class IndexConsumer : public index::IndexDataConsumer {
-public:
-  IndexConsumer(std::set<std::string> &Symbols) : Symbols(Symbols) {}
-
-  bool handleDeclOccurence(const Decl *D, index::SymbolRoleSet Roles,
-                           ArrayRef<index::SymbolRelation> Relations,
-                           FileID FID, unsigned Offset,
-                           ASTNodeInfo ASTNode) override {
-    if (!(Roles & (unsigned)index::SymbolRole::Declaration ||
-          Roles & (unsigned)index::SymbolRole::Definition)) {
-      return true;
-    }
-    if (const auto *ND = llvm::dyn_cast<NamedDecl>(D)) {
-      Symbols.insert(ND->getQualifiedNameAsString());
-    }
-    return true;
-  }
-
-private:
-  std::set<std::string> &Symbols;
-};
-
-} // namespace
-
 void ASTIndexSourcer::remove(PathRef Path) {
   std::lock_guard<std::mutex> Lock(Mutex);
-  Symbols.erase(Path);
+  FileToSymbols.erase(Path);
 }
 
 void ASTIndexSourcer::update(PathRef Path, ASTContext &Ctx,
+                             std::shared_ptr<Preprocessor> PP,
                              llvm::ArrayRef<const Decl *> TopLevelDecls) {
-  std::set<std::string> TUSymbols;
+  auto Collector = std::make_shared<SymbolCollector>();
+  Collector->setPreprocessor(std::move(PP));
+  index::IndexingOptions IndexOpts;
+  IndexOpts.SystemSymbolFilter =
+      index::IndexingOptions::SystemSymbolFilterKind::All;
+  IndexOpts.IndexFunctionLocals = false;
   {
     std::lock_guard<std::mutex> Lock(Mutex);
-    auto Consumer = std::make_shared<IndexConsumer>(TUSymbols);
-    index::IndexingOptions IndexOpts;
-    IndexOpts.SystemSymbolFilter =
-        index::IndexingOptions::SystemSymbolFilterKind::All;
-
-    index::indexTopLevelDecls(Ctx, TopLevelDecls, Consumer, IndexOpts);
+    index::indexTopLevelDecls(Ctx, TopLevelDecls, Collector, IndexOpts);
+  }
+  const auto& IDToSymbols = Collector->getSymbols();
+  std::vector<SymbolAndOccurrences> Symbols;
+  for (auto &Pair : IDToSymbols) {
+    Symbols.push_back(std::move(Pair.second));
   }
   llvm::errs() << "[ASTIndexSourcer] symbols updated. " << Path << ": "
-               << TUSymbols.size() << " symbols indexed.\n";
+               << Symbols.size() << " symbols indexed.\n";
   unsigned i = 0;
-  for (llvm::StringRef Symbol : TUSymbols) {
+  for (const auto &Sym : Symbols) {
     if (i++ > 10)
       break;
-    llvm::errs() << " --- " << Symbol;
+    llvm::errs() << " oooo [" << Sym.Sym.Identifier << " : "
+                 << Sym.Sym.QualifiedName << ", "
+   //              << Sym.Sym.CompletionInfo.Label << ","
+                 << Sym.Sym.CompletionInfo.Documentation << "], \n";
   }
   llvm::errs() << "\n";
-  Symbols[Path.str()] = std::move(TUSymbols);
+  FileToSymbols[Path.str()] = std::move(Symbols);
 }
 
 CompletionResult ASTIndexSourcer::complete(llvm::StringRef Query) const {
@@ -66,11 +49,16 @@ CompletionResult ASTIndexSourcer::complete(llvm::StringRef Query) const {
   Result.all_matched = true;
   {
     std::lock_guard<std::mutex> Lock(Mutex);
-    llvm::errs() << Symbols.size() << " symbols in the index.\n";
-    for (const auto &Pair : Symbols) {
-      for (llvm::StringRef Symbol : Pair.second) {
-        if (Symbol.contains(Query))
-          Result.Symbols.push_back(Symbol);
+    for (const auto &Pair : FileToSymbols) {
+      for (const auto &Symbol : Pair.second) {
+        if (llvm::StringRef(Symbol.Sym.QualifiedName).contains(Query)) {
+          CompletionSymbol CS;
+          CS.QualifiedName = Symbol.Sym.QualifiedName;
+          CS.UID = Symbol.Sym.Identifier;
+          CS.CompletionInfo = Symbol.Sym.CompletionInfo;
+          CS.Kind = Symbol.Sym.Kind;
+          Result.Symbols.push_back(std::move(CS));
+        }
       }
     }
   }

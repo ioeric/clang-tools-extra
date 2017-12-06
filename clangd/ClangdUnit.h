@@ -83,6 +83,7 @@ public:
 
   Preprocessor &getPreprocessor();
   const Preprocessor &getPreprocessor() const;
+  std::shared_ptr<Preprocessor> getPreprocessorPtr();
 
   /// This function returns all top-level decls, including those that come
   /// from Preamble. Decls, coming from Preamble, have to be deserialized, so
